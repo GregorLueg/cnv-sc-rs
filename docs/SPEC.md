@@ -71,7 +71,9 @@ Per pseudobulk count vector `Y_g`. Vector reference: return it, `w = 1`.
 2. `lambda_obs_g = Y_g / sum Y` over those genes.
 3. Minimise `f(w) = sum_g [ln(lambda_obs_g / (Lambda w / sum w)_g)]^2`,
    with `w_r >= 1e-6` and start `1/R`. numbat uses L-BFGS-B with a numerical
-   gradient; we use the analytic gradient.
+   gradient; we use bounded Levenberg-Marquardt on the residuals with the
+   analytic Jacobian. `f` is scale-free in `w`, so a weight at the bound
+   can reach a normalised value below `1e-6`.
 4. Normalise `w <- w / sum w` and return `lambda_bar = Lambda w`.
 5. Return `mse = f / n_genes`.
 6. Parity: the final objective is <= R's * (1 + 1e-6).
@@ -90,7 +92,10 @@ With `lambda_bar` (2.4) and the genes kept by 2.2 over all cells:
    `endrule="mean"`, checked: `runmean(c(1,2,3,10,20,30,100), 5)` gives
    `2.0 4.0 7.2 13.0 32.6 40.0 50.0`.
    **Deviation D1:** the window runs per chromosome. numbat runs one
-   running mean across chromosome boundaries.
+   running mean across chromosome boundaries. A chromosome with fewer kept
+   genes than `k` keeps the truncated-window rule above (caTools instead
+   clamps `k` to `n` and errors on a matrix). For even `k` the window is
+   `(k-1)/2` left and `k/2` right, as caTools.
 
 ### 3.2 Bins
 
@@ -415,7 +420,7 @@ Defaults (N/R/main.R:68-77):
 
 | id | what | why |
 |---|---|---|
-| D1 | running mean per chromosome | numbat smooths across chromosome ends |
+| D1 | running mean per chromosome; truncated windows also when a chromosome is shorter than `k` | numbat smooths across chromosome ends |
 | D2 | bins instead of the full gene matrix | memory: 1M x 10k f32 is 40 GB |
 | D3 | all-NA chromosome becomes `neu`, not an error | robustness |
 | D4 | expression-only retest runs | numbat's `exp_only` marks every segment neu |
