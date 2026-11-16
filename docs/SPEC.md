@@ -144,13 +144,23 @@ Note that hahmmr and `poilog::dpoilog` differ by about 4e-7 relative at
 `(x, mu, sigma) = (0, 1, 0.5)`, so parity against hahmmr cannot be tighter
 than its own quadrature (measured 2026-11-16).
 
+Sums over many genes with the same small count `x` (0 to 3) do not run the
+quadrature per gene. At fixed `x` and `sigma`, the density and its
+derivatives depend on the gene only through `t = mu + ln(phi d lambda_g)`,
+so the quadrature runs at the nodes of piecewise Chebyshev panels covering
+the group's `t` range, and each gene is interpolated. The interpolation
+error is far below the quadrature's own (constants and measurements in
+`src/model/pln.rs`). This approximates the quadrature, not numbat, so it is
+not a deviation. It applies to `fit_lnpois` (4.3) and `l_lnpois` (4.2).
+
 ### 4.2 Segment loglikelihood (H/R/distributions.R:53-57)
 
 `l_lnpois(Y, lambda, d, mu, sigma, phi) = sum_g ln PLN(Y_g; mu + ln(phi d lambda_g), sigma)`.
 
 ### 4.3 `fit_lnpois` (H/src/mle.cpp:37-51)
 
-`argmax_{mu, sigma} l_lnpois(Y, lambda, d, mu, sigma, 1)`, start `(0, 1)`,
+`argmax_{mu, sigma} l_lnpois(Y, lambda, d, mu, sigma, 1)`, start `(0, 1)` (ours:
+a method-of-moments start, which moves only the start, not the optimum),
 `sigma >= 0.01`, no upper bound. numbat uses L-BFGS-B with a numerical
 gradient. Ours is bounded Newton with the analytic gradient and Hessian,
 taken from the same quadrature nodes. With `u = (z - mu)` under the

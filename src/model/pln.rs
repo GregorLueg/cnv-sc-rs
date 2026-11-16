@@ -518,10 +518,28 @@ pub fn l_lnpois_multi<T: CnvFloat>(
         shifts.push(mu + phi.ln());
     }
     let off = offsets(y, lambda, d, None)?;
+    let g = CountGroups::new(y, &off, phis.len());
     let mut acc = vec![0.0; phis.len()];
-    for (&yg, &og) in y.iter().zip(&off) {
+    for (&yg, &og) in g.y.iter().zip(&g.off) {
         for (a, &sh) in acc.iter_mut().zip(&shifts) {
             *a += ln_pln(yg, sh + og, sigma);
+        }
+    }
+    // one interpolant per count covers every shift
+    let (s_lo, s_hi) = shifts
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| {
+            (a.min(v), b.max(v))
+        });
+    for (x, offs) in &g.tabled {
+        let (lo, hi) = min_max(offs);
+        let it = FusedInterp::new(*x, sigma, s_lo + lo, s_hi + hi);
+        for (a, &sh) in acc.iter_mut().zip(&shifts) {
+            let mut s = [0.0; N_FORMS];
+            for &o in offs {
+                it.add_to(sh + o, &mut s);
+            }
+            *a += s[0];
         }
     }
     Ok(acc)
@@ -543,6 +561,244 @@ fn sum_fused(y: &[u32], off: &[f64], mu: f64, sigma: f64) -> PlnDerivs {
     let mut acc = PlnDerivs::default();
     for (&yg, &og) in y.iter().zip(off) {
         acc.add(&ln_pln_fused(yg, mu + og, sigma));
+    }
+    acc
+}
+
+//////////////////////
+// Count interpolants //
+//////////////////////
+
+/// Largest count whose genes are summed through an interpolant in
+/// [`CountGroups`]. Counts above it are swept with [`ln_pln_fused`].
+///
+/// Measured 2026-11-16, `benches/pipeline.rs`, 1000 cells x 10k genes, one
+/// thread, fit per cell: 21.7 ms without interpolants, 6.16 ms tabling
+/// zeros, 3.34 ms up to 1, 2.40 ms up to 3, 2.33 ms up to 6 (degree 16).
+/// Three is the largest count `test_fused_interp_matches_quadrature` covers.
+const MAX_TABLED_COUNT: u32 = 3;
+
+/// Smallest group worth an interpolant: below it the node evaluations cost
+/// more than the sweep. Our choice, about four panels of nodes.
+const MIN_TABLE_GENES: usize = 64;
+
+/// Chebyshev degree per panel.
+///
+/// Measured 2026-11-16 against [`ln_pln_fused`] over `t` in `[-12, 4]`,
+/// counts 0 to 3, `sigma` 0.01 to 3, worst error relative to `max(1, |f|)`
+/// of `ln p` / `d_sigma` / `d2_sigma`, at [`CHEB_WIDTH`] 2: degree 16
+/// 3.7e-13 / 5.5e-13 / 7.1e-11, degree 12 1.7e-10 / 3.1e-9 / 7.3e-8,
+/// degree 10 3.4e-9 / 2.4e-7 / 1.3e-6. All far under the quadrature's own
+/// error (see [`GH_NODES`]). Degree 12 cut the fit from 2.40 to 2.05 ms per
+/// cell against 16, with the f32 posteriors of 1000 cells bit-identical.
+const CHEB_DEGREE: usize = 12;
+
+/// Panel width in `t = mu + off`.
+///
+/// Measured 2026-11-16 at degree 16: width 1 worst 8.0e-11, width 2
+/// 7.1e-11, width 4 1.9e-6 (on `d2_sigma`).
+const CHEB_WIDTH: f64 = 2.0;
+
+/// Fused terms per node: `ln p` and the five derivatives of [`PlnDerivs`].
+const N_FORMS: usize = 6;
+
+/// Genes of one fit split by count, for [`sum_grouped`].
+///
+/// At a fixed count `x` and `sigma`, every term of [`ln_pln_fused`] depends on
+/// the gene only through `t = mu + off_g`. A large group of equal counts is
+/// therefore summed by evaluating the quadrature at the Chebyshev nodes of
+/// panels covering its `t` range, then interpolating every gene, rather than
+/// running a mode search and quadrature per gene.
+///
+/// ### References
+///
+/// Trefethen. *Approximation Theory and Approximation Practice.* SIAM (2013).
+struct CountGroups {
+    /// `(count, offsets)` of each interpolated group
+    tabled: Vec<(u32, Vec<f64>)>,
+    /// Counts of the swept genes
+    y: Vec<u32>,
+    /// Offsets of the swept genes
+    off: Vec<f64>,
+}
+
+impl CountGroups {
+    /// Split genes into interpolated groups and swept genes.
+    ///
+    /// ### Params
+    ///
+    /// * `y` - Counts
+    /// * `off` - Per-gene offsets, same length
+    /// * `n_evals` - Evaluations per gene, so a group is tabled once
+    ///   `size * n_evals >= MIN_TABLE_GENES`
+    ///
+    /// ### Returns
+    ///
+    /// The split.
+    fn new(y: &[u32], off: &[f64], n_evals: usize) -> Self {
+        let n_tab = MAX_TABLED_COUNT as usize + 1;
+        let mut size = vec![0usize; n_tab];
+        for &yg in y {
+            if (yg as usize) < n_tab {
+                size[yg as usize] += 1;
+            }
+        }
+        let tab = |yg: u32| (yg as usize) < n_tab && size[yg as usize] * n_evals >= MIN_TABLE_GENES;
+        let mut groups: Vec<Vec<f64>> = vec![Vec::new(); n_tab];
+        let (mut ys, mut offs) = (Vec::new(), Vec::new());
+        for (&yg, &og) in y.iter().zip(off) {
+            if tab(yg) {
+                groups[yg as usize].push(og);
+            } else {
+                ys.push(yg);
+                offs.push(og);
+            }
+        }
+        let tabled = groups
+            .into_iter()
+            .enumerate()
+            .filter(|(_, g)| !g.is_empty())
+            .map(|(x, g)| (x as u32, g))
+            .collect();
+        Self {
+            tabled,
+            y: ys,
+            off: offs,
+        }
+    }
+}
+
+/// Piecewise Chebyshev interpolant of [`ln_pln_fused`] in `t` at fixed count
+/// and `sigma`.
+struct FusedInterp {
+    /// Left end of the first panel
+    t_lo: f64,
+    /// Coefficients, `[panel][degree][form]`
+    coef: Vec<[f64; N_FORMS]>,
+}
+
+impl FusedInterp {
+    /// Build over `[t_lo, t_hi]`.
+    ///
+    /// ### Params
+    ///
+    /// * `x` - Count
+    /// * `sigma` - Standard deviation of the latent log-rate
+    /// * `t_lo` - Smallest `t` to cover
+    /// * `t_hi` - Largest `t` to cover
+    ///
+    /// ### Returns
+    ///
+    /// The interpolant.
+    fn new(x: u32, sigma: f64, t_lo: f64, t_hi: f64) -> Self {
+        let n_panels = (((t_hi - t_lo) / CHEB_WIDTH).floor() as usize) + 1;
+        let n = CHEB_DEGREE;
+        let mut coef = vec![[0.0; N_FORMS]; n_panels * (n + 1)];
+        let mut vals = vec![[0.0; N_FORMS]; n + 1];
+        for p in 0..n_panels {
+            let centre = t_lo + (p as f64 + 0.5) * CHEB_WIDTH;
+            for (j, v) in vals.iter_mut().enumerate() {
+                let u = (PI * j as f64 / n as f64).cos();
+                let d = ln_pln_fused(x, centre + 0.5 * CHEB_WIDTH * u, sigma);
+                *v = [
+                    d.ln_p,
+                    d.d_mu,
+                    d.d_sigma,
+                    d.d2_mu,
+                    d.d2_mu_sigma,
+                    d.d2_sigma,
+                ];
+            }
+            // c_k = (2 / n) sum'' f_j cos(pi j k / n), ends halved
+            let c = &mut coef[p * (n + 1)..(p + 1) * (n + 1)];
+            for (k, ck) in c.iter_mut().enumerate() {
+                for (j, v) in vals.iter().enumerate() {
+                    let w = if j == 0 || j == n { 0.5 } else { 1.0 };
+                    let cs = w * (PI * (j * k) as f64 / n as f64).cos();
+                    for f in 0..N_FORMS {
+                        ck[f] += cs * v[f];
+                    }
+                }
+                let w = if k == 0 || k == n { 1.0 } else { 2.0 };
+                for f in 0..N_FORMS {
+                    ck[f] *= w / n as f64;
+                }
+            }
+        }
+        Self { t_lo, coef }
+    }
+
+    /// Add the interpolated terms at `t` to an accumulator (Clenshaw).
+    ///
+    /// ### Params
+    ///
+    /// * `t` - Point inside the built range
+    /// * `acc` - Accumulator, in [`PlnDerivs`] field order
+    #[inline]
+    fn add_to(&self, t: f64, acc: &mut [f64; N_FORMS]) {
+        let n = CHEB_DEGREE;
+        let r = (t - self.t_lo) / CHEB_WIDTH;
+        let p = (r as usize).min(self.coef.len() / (n + 1) - 1);
+        let u = 2.0 * (r - p as f64) - 1.0;
+        let c = &self.coef[p * (n + 1)..(p + 1) * (n + 1)];
+        let (mut b1, mut b2) = ([0.0; N_FORMS], [0.0; N_FORMS]);
+        for ck in c[1..].iter().rev() {
+            for f in 0..N_FORMS {
+                let b0 = ck[f] + 2.0 * u * b1[f] - b2[f];
+                b2[f] = b1[f];
+                b1[f] = b0;
+            }
+        }
+        for f in 0..N_FORMS {
+            acc[f] += c[0][f] + u * b1[f] - b2[f];
+        }
+    }
+}
+
+/// Smallest and largest value.
+///
+/// ### Params
+///
+/// * `v` - Values, non-empty
+///
+/// ### Returns
+///
+/// `(min, max)`.
+fn min_max(v: &[f64]) -> (f64, f64) {
+    v.iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &o| {
+            (a.min(o), b.max(o))
+        })
+}
+
+/// [`sum_fused`] over [`CountGroups`]: interpolated groups plus the sweep.
+///
+/// ### Params
+///
+/// * `g` - The split genes
+/// * `mu` - Mean of the latent log-rate
+/// * `sigma` - Standard deviation of the latent log-rate
+///
+/// ### Returns
+///
+/// Summed loglikelihood, gradient and Hessian.
+fn sum_grouped(g: &CountGroups, mu: f64, sigma: f64) -> PlnDerivs {
+    let mut acc = sum_fused(&g.y, &g.off, mu, sigma);
+    for (x, offs) in &g.tabled {
+        let (lo, hi) = min_max(offs);
+        let it = FusedInterp::new(*x, sigma, mu + lo, mu + hi);
+        let mut s = [0.0; N_FORMS];
+        for &o in offs {
+            it.add_to(mu + o, &mut s);
+        }
+        acc.add(&PlnDerivs {
+            ln_p: s[0],
+            d_mu: s[1],
+            d_sigma: s[2],
+            d2_mu: s[3],
+            d2_mu_sigma: s[4],
+            d2_sigma: s[5],
+        });
     }
     acc
 }
@@ -623,7 +879,8 @@ pub fn fit_lnpois<T: CnvFloat>(y: &[u32], lambda: &[T], d: f64) -> Result<Lnpois
     }
     let off = offsets(y, lambda, d, None)?;
     let (mut mu, mut sigma) = moment_start(y, &off);
-    let mut cur = sum_fused(y, &off, mu, sigma);
+    let groups = CountGroups::new(y, &off, 1);
+    let mut cur = sum_grouped(&groups, mu, sigma);
     for iter in 0..FIT_MAX_ITER {
         let (g1, g2) = (cur.d_mu, cur.d_sigma);
         let (h11, h12, h22) = (cur.d2_mu, cur.d2_mu_sigma, cur.d2_sigma);
@@ -656,7 +913,7 @@ pub fn fit_lnpois<T: CnvFloat>(y: &[u32], lambda: &[T], d: f64) -> Result<Lnpois
         let mut accepted = false;
         for _ in 0..FIT_MAX_HALVINGS {
             let (mu_n, sig_n) = (mu + t * d1, (sigma + t * d2).max(SIGMA_MIN));
-            let next = sum_fused(y, &off, mu_n, sig_n);
+            let next = sum_grouped(&groups, mu_n, sig_n);
             if next.ln_p > cur.ln_p {
                 (mu, sigma, cur) = (mu_n, sig_n, next);
                 accepted = true;
@@ -1001,7 +1258,7 @@ mod tests {
         let multi = l_lnpois_multi(&s.y, &s.lambda, s.d, -1.0, 0.8, &phis).unwrap();
         for (k, &phi) in phis.iter().enumerate() {
             let single = l_lnpois(&s.y, &s.lambda, s.d, -1.0, 0.8, phi).unwrap();
-            assert_eq!(multi[k], single);
+            assert_relative_eq!(multi[k], single, max_relative = 1e-12);
         }
         let f32_lambda: Vec<f32> = s.lambda.iter().map(|&l| l as f32).collect();
         let l32 = l_lnpois(&s.y, &f32_lambda, s.d, -1.0, 0.8, 1.0).unwrap();
@@ -1098,5 +1355,40 @@ mod tests {
             phi_mle(&y, &lambda, 1000.0, 0.0, 0.5).unwrap(),
             PHI_MLE_BOUNDS.0
         );
+    }
+
+    #[test]
+    fn test_fused_interp_matches_quadrature() {
+        let mut worst = [0.0f64; N_FORMS];
+        for &x in &[0u32, 1, 2, 3] {
+            for &sigma in &[0.01, 0.05, 0.1, 0.3, 0.5, 1.0, 1.5, 2.0, 3.0] {
+                let (lo, hi) = (-12.0, 4.0);
+                let it = FusedInterp::new(x, sigma, lo, hi);
+                for k in 0..=1601 {
+                    let t = lo + (hi - lo) * k as f64 / 1601.0;
+                    let mut a = [0.0; N_FORMS];
+                    it.add_to(t, &mut a);
+                    let d = ln_pln_fused(x, t, sigma);
+                    let e = [
+                        d.ln_p,
+                        d.d_mu,
+                        d.d_sigma,
+                        d.d2_mu,
+                        d.d2_mu_sigma,
+                        d.d2_sigma,
+                    ];
+                    for f in 0..N_FORMS {
+                        let err = (a[f] - e[f]).abs() / e[f].abs().max(1.0);
+                        worst[f] = worst[f].max(err);
+                    }
+                }
+            }
+        }
+        println!("worst {:?}", worst.map(|w| format!("{w:.2e}")));
+        // ln p, then the derivatives; measured worst at degree 12 is 7.3e-8
+        let tol = [1e-9, 1e-9, 1e-8, 1e-8, 1e-8, 1e-6];
+        for f in 0..N_FORMS {
+            assert!(worst[f] < tol[f], "form {f}: {:.2e}", worst[f]);
+        }
     }
 }
