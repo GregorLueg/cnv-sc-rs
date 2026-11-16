@@ -410,6 +410,15 @@ the tree.
 
 numbat iterates using the tree (`max_iter = 2`); tier 0 runs one pass.
 
+Cells are read through `CellBlocks`, in ascending blocks, in four passes:
+reference choice per cell plus the gene sums of the kept cells (2, and 2.2's
+`lambda_obs`); smoothing (3); the groups' gene sums (7.2); per-cell
+posteriors (8). A `Reference::Cells` reference adds one pass before them
+that sums the normal cells. Everything per cell is independent of the
+block, and every sum is an exact integer, so the result does not depend on
+the block size. Between passes only per-gene sums, the bins and the outputs
+are held.
+
 Defaults (N/R/main.R:68-77):
 
 | param | default |

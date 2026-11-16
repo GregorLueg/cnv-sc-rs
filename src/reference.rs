@@ -109,38 +109,55 @@ impl<T: CnvFloat> Reference<'_, T> {
     ///
     /// The profiles, or an error for a malformed reference.
     pub fn resolve(&self, counts: &CsrCounts, order: &GenomeOrder) -> Result<Profiles, CnvErrors> {
-        let n = order.n_genes();
         match *self {
-            Reference::Profiles { lambda, n_ref } => {
-                if n_ref == 0 {
-                    return Err(CnvErrors::EmptyInput {
-                        what: "reference profiles",
-                    });
-                }
-                if lambda.len() != n * n_ref {
-                    return Err(CnvErrors::ShapeMismatch {
-                        what: "reference profiles",
-                        expected: n * n_ref,
-                        got: lambda.len(),
-                    });
-                }
-                let mut out = Vec::with_capacity(n * n_ref);
-                for col in lambda.chunks_exact(n) {
-                    out.extend(order.perm.iter().map(|&g| wide(col[g as usize])));
-                }
-                if out.iter().any(|&x| !(x.is_finite() && x >= 0.0)) {
-                    return Err(CnvErrors::InvalidReference {
-                        what: "profiles must be finite and non-negative",
-                    });
-                }
-                Ok(Profiles { n_ref, lambda: out })
-            }
+            Reference::Profiles { lambda, n_ref } => profiles_genomic(lambda, n_ref, order),
             Reference::Cells(cells) => Ok(Profiles {
                 n_ref: 1,
                 lambda: aggregate(counts, order, cells)?,
             }),
         }
     }
+}
+
+/// Check caller-order profiles and permute them into genomic order.
+///
+/// ### Params
+///
+/// * `lambda` - `n_genes * n_ref` proportions, profile-major, caller order
+/// * `n_ref` - Number of profiles
+/// * `order` - Genomic order of the genes
+///
+/// ### Returns
+///
+/// The profiles, or an error for a malformed reference.
+pub fn profiles_genomic<T: CnvFloat>(
+    lambda: &[T],
+    n_ref: usize,
+    order: &GenomeOrder,
+) -> Result<Profiles, CnvErrors> {
+    let n = order.n_genes();
+    if n_ref == 0 {
+        return Err(CnvErrors::EmptyInput {
+            what: "reference profiles",
+        });
+    }
+    if lambda.len() != n * n_ref {
+        return Err(CnvErrors::ShapeMismatch {
+            what: "reference profiles",
+            expected: n * n_ref,
+            got: lambda.len(),
+        });
+    }
+    let mut out = Vec::with_capacity(n * n_ref);
+    for col in lambda.chunks_exact(n) {
+        out.extend(order.perm.iter().map(|&g| wide(col[g as usize])));
+    }
+    if out.iter().any(|&x| !(x.is_finite() && x >= 0.0)) {
+        return Err(CnvErrors::InvalidReference {
+            what: "profiles must be finite and non-negative",
+        });
+    }
+    Ok(Profiles { n_ref, lambda: out })
 }
 
 /// Pool cells into one normalised profile (`aggregate_counts`, SPEC 2.1).
@@ -166,7 +183,19 @@ pub fn aggregate(
             what: "reference cells",
         });
     }
-    let sums = order.to_genomic(&counts.gene_sums(Some(cells))?)?;
+    profile_from_sums(&order.to_genomic(&counts.gene_sums(Some(cells))?)?)
+}
+
+/// Normalise pooled gene sums into a profile (SPEC 2.1).
+///
+/// ### Params
+///
+/// * `sums` - Summed counts per gene over the reference cells
+///
+/// ### Returns
+///
+/// `sums / sum(sums)`, same order, or an error if every sum is zero.
+pub fn profile_from_sums(sums: &[u64]) -> Result<Vec<f64>, CnvErrors> {
     let total: u64 = sums.iter().sum();
     if total == 0 {
         return Err(CnvErrors::InvalidReference {
@@ -212,7 +241,39 @@ pub fn filter_genes(
             });
         }
     }
-    let sums = order.to_genomic(&counts.gene_sums(cells)?)?;
+    filter_genes_from_sums(
+        &order.to_genomic(&counts.gene_sums(cells)?)?,
+        lambda_ref,
+        allowed,
+    )
+}
+
+/// [`filter_genes`] from gene sums already pooled over the cells.
+///
+/// ### Params
+///
+/// * `sums` - Summed counts per gene, genomic order
+/// * `lambda_ref` - One reference profile, genomic order
+/// * `allowed` - From [`GenomeOrder::allowed_mask`]
+///
+/// ### Returns
+///
+/// Keep mask per gene, genomic order, or a shape error.
+pub fn filter_genes_from_sums(
+    sums: &[u64],
+    lambda_ref: &[f64],
+    allowed: &[bool],
+) -> Result<Vec<bool>, CnvErrors> {
+    let n = sums.len();
+    for (what, len) in [("lambda_ref", lambda_ref.len()), ("allowed", allowed.len())] {
+        if len != n {
+            return Err(CnvErrors::ShapeMismatch {
+                what,
+                expected: n,
+                got: len,
+            });
+        }
+    }
     let total: u64 = (0..n).filter(|&i| allowed[i]).map(|i| sums[i]).sum();
     if total == 0 {
         return Err(CnvErrors::EmptyInput {

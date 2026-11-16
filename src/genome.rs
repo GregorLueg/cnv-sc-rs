@@ -163,6 +163,100 @@ impl<'a> CsrCounts<'a> {
     }
 }
 
+impl CsrCounts<'_> {
+    /// View of cells `lo..hi` without copying; row 0 of the view is cell `lo`.
+    ///
+    /// `indptr` of the view does not start at zero: rows index the full
+    /// `indices` and `data`.
+    ///
+    /// ### Params
+    ///
+    /// * `lo` - First cell
+    /// * `hi` - One past the last cell, `<= n_cells`
+    ///
+    /// ### Returns
+    ///
+    /// The view.
+    fn rows(&self, lo: usize, hi: usize) -> CsrCounts<'_> {
+        CsrCounts {
+            indptr: &self.indptr[lo..=hi],
+            indices: self.indices,
+            data: self.data,
+            n_genes: self.n_genes,
+        }
+    }
+}
+
+////////////////
+// CellBlocks //
+////////////////
+
+/// A source of cells read in contiguous blocks (SPEC 10).
+///
+/// The pipeline passes over the cells a fixed number of times, block by
+/// block in ascending order, and never holds more than one block of counts.
+/// An in-memory [`CsrCounts`] implements it without copying; an on-disk
+/// store implements it by reading the block into its own buffers.
+pub trait CellBlocks: Sync {
+    /// Number of cells.
+    ///
+    /// ### Returns
+    ///
+    /// The count.
+    fn n_cells(&self) -> usize;
+
+    /// Number of genes, caller order.
+    ///
+    /// ### Returns
+    ///
+    /// The count.
+    fn n_genes(&self) -> usize;
+
+    /// Run `f` on cells `lo..hi` as counts whose row 0 is cell `lo`.
+    ///
+    /// ### Params
+    ///
+    /// * `lo` - First cell
+    /// * `hi` - One past the last cell, `<= n_cells`
+    /// * `f` - Work on the block
+    ///
+    /// ### Returns
+    ///
+    /// `f`'s result, or a read error from the source.
+    fn with_block<R>(
+        &self,
+        lo: usize,
+        hi: usize,
+        f: impl FnOnce(&CsrCounts<'_>) -> Result<R, CnvErrors>,
+    ) -> Result<R, CnvErrors>;
+}
+
+impl CellBlocks for CsrCounts<'_> {
+    fn n_cells(&self) -> usize {
+        CsrCounts::n_cells(self)
+    }
+
+    fn n_genes(&self) -> usize {
+        self.n_genes
+    }
+
+    fn with_block<R>(
+        &self,
+        lo: usize,
+        hi: usize,
+        f: impl FnOnce(&CsrCounts<'_>) -> Result<R, CnvErrors>,
+    ) -> Result<R, CnvErrors> {
+        if lo > hi || hi > CsrCounts::n_cells(self) {
+            return Err(CnvErrors::InvalidParameter {
+                name: "block",
+                value: format!("{lo}..{hi}"),
+                expected: "a range within 0..n_cells",
+            });
+        }
+        f(&self.rows(lo, hi))
+    }
+}
+
 /////////////////
 // GenomeOrder //
 /////////////////

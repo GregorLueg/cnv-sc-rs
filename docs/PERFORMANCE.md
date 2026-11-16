@@ -49,10 +49,18 @@ ours includes the simulation and the text dump, infercnvpy's the warm-up.
 |---|---|---|---|---|---|---|
 | 10k | 3.83 s | 4.87 s | 19.5 s | 24.4 s | 0.73 GB | 1.95 GB |
 | 20k | 7.55 s | 5.54 s | 42.6 s | 48.1 s | 1.45 GB | 3.15 GB |
+| 50k | 18.43 s | 7.17 s | 164.8 s | 172.0 s | 3.34 GB | 6.28 GB |
 
 At 20k our per-stage seconds: smoothing 0.06, clustering 1.06, bulk HMMs
 0.21, consensus 0.11, cell posteriors 6.12; peak heap above the 349 MB input
 103 MB. Tumour/normal accuracy 0.966 (10k) and 0.965 (20k).
+
+### Reading cells in blocks (`CellBlocks`)
+
+50k cells x 10k genes, 10 threads, `BLOCK_CELLS` = 8192. In memory (no
+copy): total 18.84 s. Every block copied into fresh buffers, as a store
+would: 19.06 s. Peak heap above the input 204 MB and 196 MB. Before blocks
+(one pass over the whole matrix): 18.43 s.
 
 ## PLN quadrature (`GH_NODES`)
 

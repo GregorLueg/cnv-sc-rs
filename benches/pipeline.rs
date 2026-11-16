@@ -1,7 +1,8 @@
 //! End-to-end `run_cnv` on simulated counts: stage split, wall-clock and peak
 //! heap. Size from `CNV_CELLS` and `CNV_GENES` (default 10k x 10k). With
 //! `CNV_DUMP=<dir>` the counts, genes and truth are also written there as
-//! plain text, so other tools can run on the identical matrix.
+//! plain text, so other tools can run on the identical matrix. With
+//! `CNV_COPY=1` every block is copied into fresh buffers, as a store would.
 //!
 //! Simulation: 20 equal chromosomes, log-normal gene means, PLN noise
 //! (sigma 0.3), depth uniform in [2000, 6000). A third of the cells are
@@ -14,7 +15,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use cnv_sc_rs::cnv::{CnvParams, run_cnv};
-use cnv_sc_rs::genome::CsrCounts;
+use cnv_sc_rs::errors::CnvErrors;
+use cnv_sc_rs::genome::{CellBlocks, CsrCounts};
 use cnv_sc_rs::posterior::effective_state;
 use cnv_sc_rs::prelude::Verbosity;
 use cnv_sc_rs::reference::Reference;
@@ -46,6 +48,34 @@ unsafe impl GlobalAlloc for Counting {
 
 #[global_allocator]
 static ALLOC: Counting = Counting;
+
+/// A source that copies each block into fresh buffers, as a store would.
+struct Copying<'a>(CsrCounts<'a>);
+
+impl CellBlocks for Copying<'_> {
+    fn n_cells(&self) -> usize {
+        self.0.n_cells()
+    }
+
+    fn n_genes(&self) -> usize {
+        self.0.n_genes
+    }
+
+    fn with_block<R>(
+        &self,
+        lo: usize,
+        hi: usize,
+        f: impl FnOnce(&CsrCounts<'_>) -> Result<R, CnvErrors>,
+    ) -> Result<R, CnvErrors> {
+        let (a, b) = (self.0.indptr[lo] as usize, self.0.indptr[hi] as usize);
+        let indptr: Vec<u32> = self.0.indptr[lo..=hi]
+            .iter()
+            .map(|&p| p - a as u32)
+            .collect();
+        let (idx, val) = (self.0.indices[a..b].to_vec(), self.0.data[a..b].to_vec());
+        f(&CsrCounts::new(&indptr, &idx, &val, self.0.n_genes)?)
+    }
+}
 
 /// Chromosomes, equal size.
 const N_CHROM: usize = 20;
@@ -163,16 +193,35 @@ fn main() {
     let base = LIVE.load(Ordering::Relaxed);
     PEAK.store(base, Ordering::Relaxed);
     let t = Instant::now();
-    let res = run_cnv::<f32>(
-        &counts,
-        &chrom,
-        &start,
-        &end,
-        &reference,
-        Some(CnvParams::default()),
-        Verbosity::Normal,
-    )
+    let copy = std::env::var("CNV_COPY").is_ok_and(|v| v == "1");
+    let params = Some(CnvParams::default());
+    let res = if copy {
+        let src = Copying(counts);
+        run_cnv::<f32>(
+            &src,
+            &chrom,
+            &start,
+            &end,
+            &reference,
+            params,
+            Verbosity::Normal,
+        )
+    } else {
+        run_cnv::<f32>(
+            &counts,
+            &chrom,
+            &start,
+            &end,
+            &reference,
+            params,
+            Verbosity::Normal,
+        )
+    }
     .unwrap();
+    println!(
+        "source: {}",
+        if copy { "copied blocks" } else { "in memory" }
+    );
     let wall = t.elapsed().as_secs_f64();
     let peak = PEAK.load(Ordering::Relaxed) - base;
     println!(

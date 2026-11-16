@@ -12,14 +12,15 @@ use bonsai_rs::tree::linkage::LinkageParams;
 
 use crate::cluster::{Group, ward_groups};
 use crate::errors::CnvErrors;
-use crate::genome::{CsrCounts, GenomeOrder};
+use crate::genome::{CellBlocks, GenomeOrder};
 use crate::hmm::{BulkHmmInput, CnState, HmmParams, STATES, decode_bulk};
 use crate::posterior::{
     CellPosteriors, ClonePosterior, GenotypeEvent, cell_posteriors, clone_posterior,
     effective_state,
 };
 use crate::reference::{
-    Profiles, Reference, choose_ref_cor, filter_genes, fit_ref_sse, lambdas_bar,
+    Profiles, Reference, choose_ref_cor, filter_genes_from_sums, fit_ref_sse, lambdas_bar,
+    profile_from_sums, profiles_genomic,
 };
 use crate::segments::{
     BulkGenes, ConsensusParams, Genome, PostState, Segment, annot_segs, fit_baseline,
@@ -31,6 +32,11 @@ use crate::utils::traits::CnvFloat;
 /// Pseudobulk genes with `|logFC|` at or above this are dropped unless their
 /// count is 0 (N/R/utils.R:368).
 const BULK_MAX_ABS_LOGFC: f64 = 5.0;
+
+/// Default cells per block read from a [`CellBlocks`] source. Our choice:
+/// enough cells per block to keep every thread busy, small enough that one
+/// block of counts is a minor share of memory.
+pub const BLOCK_CELLS: usize = 8192;
 
 ////////////
 // Params //
@@ -59,6 +65,8 @@ pub struct CnvParams {
     pub p_multi: f64,
     /// kNN-Ward knobs, `None` for bonsai's defaults
     pub linkage: Option<LinkageParams>,
+    /// Cells per block read from the source, `>= 1`
+    pub block_cells: usize,
 }
 
 impl Default for CnvParams {
@@ -74,6 +82,7 @@ impl Default for CnvParams {
             max_entropy: 0.5,
             p_multi: 1.0 - 1e-4,
             linkage: None,
+            block_cells: BLOCK_CELLS,
         }
     }
 }
@@ -145,31 +154,29 @@ impl Bulk {
     }
 }
 
-/// Build a pseudobulk (SPEC 7.2): sum, fit the reference mixture, filter
-/// genes, drop extreme `logFC` and `lambda = 0`.
+/// Build a pseudobulk (SPEC 7.2) from its gene sums: fit the reference
+/// mixture, filter genes, drop extreme `logFC` and `lambda = 0`.
 ///
 /// ### Params
 ///
-/// * `counts` - Count matrix
+/// * `sums` - The group's summed counts per gene, caller order
 /// * `order` - Genomic order
 /// * `profiles` - Reference profiles
 /// * `allowed` - Exclusion mask, genomic order
-/// * `cells` - The group's cells
 ///
 /// ### Returns
 ///
 /// The bulk, or an error (including a count beyond `u32`).
 fn make_bulk(
-    counts: &CsrCounts,
+    sums: &[u64],
     order: &GenomeOrder,
     profiles: &Profiles,
     allowed: &[bool],
-    cells: &[u32],
 ) -> Result<Bulk, CnvErrors> {
-    let y_all = order.to_genomic(&counts.gene_sums(Some(cells))?)?;
+    let y_all = order.to_genomic(sums)?;
     let fit = fit_ref_sse(&y_all, profiles)?;
     let d = y_all.iter().sum::<u64>() as f64;
-    let keep = filter_genes(counts, order, &fit.lambda_bar, Some(cells), allowed)?;
+    let keep = filter_genes_from_sums(&y_all, &fit.lambda_bar, allowed)?;
     let mut b = Bulk {
         gene: Vec::new(),
         chrom: Vec::new(),
@@ -233,6 +240,49 @@ fn call_bulk(bulk: &Bulk, id: u32, params: &CnvParams) -> Result<Vec<Segment>, C
     Ok(segs)
 }
 
+/// Block ranges covering `0..n`.
+///
+/// ### Params
+///
+/// * `n` - Number of cells
+/// * `block` - Cells per block, `>= 1`
+///
+/// ### Returns
+///
+/// `(lo, hi)` per block, ascending.
+fn blocks(n: usize, block: usize) -> impl Iterator<Item = (usize, usize)> {
+    (0..n)
+        .step_by(block)
+        .map(move |lo| (lo, (lo + block).min(n)))
+}
+
+/// Members of an ascending cell list inside `lo..hi`, relative to `lo`.
+///
+/// ### Params
+///
+/// * `cells` - Ascending cell indices
+/// * `lo` - First cell of the block
+/// * `hi` - One past the last cell of the block
+///
+/// ### Returns
+///
+/// `(range in cells, block-relative indices)`.
+fn in_block(cells: &[u32], lo: usize, hi: usize) -> (std::ops::Range<usize>, Vec<u32>) {
+    let a = cells.partition_point(|&c| (c as usize) < lo);
+    let b = cells.partition_point(|&c| (c as usize) < hi);
+    (a..b, cells[a..b].iter().map(|&c| c - lo as u32).collect())
+}
+
+/// Add one vector of sums into another.
+///
+/// ### Params
+///
+/// * `acc` - Accumulator
+/// * `x` - Sums to add, same length
+fn add_sums(acc: &mut [u64], x: &[u64]) {
+    acc.iter_mut().zip(x).for_each(|(a, b)| *a += b);
+}
+
 /// Print a stage timing line.
 ///
 /// ### Params
@@ -252,9 +302,14 @@ fn log_stage(v: Verbosity, stage: &str, t: Instant) {
 
 /// Expression-only CNV inference, one pass (SPEC 10).
 ///
+/// Reads the cells four times, block by block (SPEC 10): reference choice
+/// and gene sums, smoothing to bins, pseudobulk sums, per-cell posteriors.
+/// Between passes it holds only per-gene sums, the bins and the outputs, so
+/// counts never need to be in memory as a whole.
+///
 /// ### Params
 ///
-/// * `counts` - Cells x genes raw counts, caller gene order
+/// * `counts` - Cells x genes raw counts, caller gene order, read in blocks
 /// * `chrom` - Chromosome id per gene, caller order
 /// * `start` - Gene start per gene
 /// * `end` - Gene end per gene
@@ -267,7 +322,7 @@ fn log_stage(v: Verbosity, stage: &str, t: Instant) {
 /// The result. If the consensus has no non-neutral segment, posteriors and
 /// clones are `None`.
 pub fn run_cnv<T: CnvFloat>(
-    counts: &CsrCounts,
+    counts: &impl CellBlocks,
     chrom: &[u32],
     start: &[u64],
     end: &[u64],
@@ -276,15 +331,75 @@ pub fn run_cnv<T: CnvFloat>(
     verbosity: Verbosity,
 ) -> Result<CnvResult<T>, CnvErrors> {
     let params = params.unwrap_or_default();
+    if params.block_cells == 0 {
+        return Err(CnvErrors::InvalidParameter {
+            name: "block_cells",
+            value: "0".into(),
+            expected: ">= 1",
+        });
+    }
     let t = Instant::now();
     let order = GenomeOrder::new(chrom, start, end)?;
+    let (n_cells, n_genes) = (counts.n_cells(), order.n_genes());
+    if counts.n_genes() != n_genes {
+        return Err(CnvErrors::ShapeMismatch {
+            what: "genes in counts",
+            expected: n_genes,
+            got: counts.n_genes(),
+        });
+    }
     let allowed = order.allowed_mask(&params.exclude);
-    let profiles = reference.resolve(counts, &order)?;
-    let refs = choose_ref_cor(counts, &order, &profiles)?;
-    let cells: Vec<u32> = (0..counts.n_cells())
-        .filter(|&c| refs[c].is_some() && counts.row(c).1.iter().any(|&v| v > 0))
-        .map(|c| c as u32)
-        .collect();
+    let profiles = match *reference {
+        Reference::Profiles { lambda, n_ref } => profiles_genomic(lambda, n_ref, &order)?,
+        Reference::Cells(list) => {
+            if list.is_empty() {
+                return Err(CnvErrors::EmptyInput {
+                    what: "reference cells",
+                });
+            }
+            if let Some(&c) = list.iter().find(|&&c| c as usize >= n_cells) {
+                return Err(CnvErrors::InvalidParameter {
+                    name: "cells",
+                    value: c.to_string(),
+                    expected: "cell indices below n_cells",
+                });
+            }
+            let mut list = list.to_vec();
+            list.sort_unstable();
+            let mut sums = vec![0u64; n_genes];
+            for (lo, hi) in blocks(n_cells, params.block_cells) {
+                let (_, rel) = in_block(&list, lo, hi);
+                if !rel.is_empty() {
+                    add_sums(
+                        &mut sums,
+                        &counts.with_block(lo, hi, |b| b.gene_sums(Some(&rel)))?,
+                    );
+                }
+            }
+            Profiles {
+                n_ref: 1,
+                lambda: profile_from_sums(&order.to_genomic(&sums)?)?,
+            }
+        }
+    };
+
+    // pass 1: reference per cell, kept cells, their gene sums
+    let mut refs = Vec::with_capacity(n_cells);
+    let mut cells = Vec::new();
+    let mut sums = vec![0u64; n_genes];
+    for (lo, hi) in blocks(n_cells, params.block_cells) {
+        counts.with_block(lo, hi, |b| {
+            let r = choose_ref_cor(b, &order, &profiles)?;
+            let kept: Vec<u32> = (0..b.n_cells())
+                .filter(|&c| r[c].is_some() && b.row(c).1.iter().any(|&v| v > 0))
+                .map(|c| c as u32)
+                .collect();
+            add_sums(&mut sums, &b.gene_sums(Some(&kept))?);
+            cells.extend(kept.iter().map(|&c| c + lo as u32));
+            refs.extend(r);
+            Ok(())
+        })?;
+    }
     if cells.is_empty() {
         return Err(CnvErrors::EmptyInput {
             what: "cells with counts",
@@ -293,10 +408,28 @@ pub fn run_cnv<T: CnvFloat>(
     let lambda_bar = lambdas_bar(&profiles, &refs)?;
     log_stage(verbosity, "reference", t);
 
+    // pass 2: smoothing
     let t = Instant::now();
-    let keep = filter_genes(counts, &order, &lambda_bar, Some(&cells), &allowed)?;
-    let bins: SmoothedBins<T> =
-        smooth_bins(counts, &order, &keep, &lambda_bar, Some(params.smooth))?;
+    let keep = filter_genes_from_sums(&order.to_genomic(&sums)?, &lambda_bar, &allowed)?;
+    drop(sums);
+    let mut bins: Option<SmoothedBins<T>> = None;
+    for (lo, hi) in blocks(n_cells, params.block_cells) {
+        let part: SmoothedBins<T> = counts.with_block(lo, hi, |b| {
+            smooth_bins(b, &order, &keep, &lambda_bar, Some(params.smooth))
+        })?;
+        match bins.as_mut() {
+            None => {
+                let mut first = part;
+                first.data.reserve_exact(first.bins.len() * (n_cells - hi));
+                bins = Some(first);
+            }
+            Some(acc) => {
+                acc.data.extend_from_slice(&part.data);
+                acc.n_cells += part.n_cells;
+            }
+        }
+    }
+    let bins = bins.expect("n_cells > 0 since cells is non-empty");
     log_stage(verbosity, "smoothing", t);
 
     let t = Instant::now();
@@ -318,10 +451,24 @@ pub fn run_cnv<T: CnvFloat>(
     log_stage(verbosity, "clustering", t);
 
     let t = Instant::now();
-    let bulks: Vec<Bulk> = groups
+    // pass 3: pseudobulk sums
+    let mut group_sums = vec![vec![0u64; n_genes]; groups.len()];
+    for (lo, hi) in blocks(n_cells, params.block_cells) {
+        counts.with_block(lo, hi, |b| {
+            for (g, acc) in groups.iter().zip(group_sums.iter_mut()) {
+                let (_, rel) = in_block(&g.cells, lo, hi);
+                if !rel.is_empty() {
+                    add_sums(acc, &b.gene_sums(Some(&rel))?);
+                }
+            }
+            Ok(())
+        })?;
+    }
+    let bulks: Vec<Bulk> = group_sums
         .iter()
-        .map(|g| make_bulk(counts, &order, &profiles, &allowed, &g.cells))
+        .map(|y| make_bulk(y, &order, &profiles, &allowed))
         .collect::<Result<_, _>>()?;
+    drop(group_sums);
     let mut segs = Vec::new();
     for (i, b) in bulks.iter().enumerate() {
         segs.extend(call_bulk(b, i as u32, &params)?);
@@ -387,15 +534,42 @@ pub fn run_cnv<T: CnvFloat>(
         .iter()
         .map(|&c| out.refs[c as usize].expect("kept cells have a reference"))
         .collect();
-    let post = cell_posteriors(
-        counts,
-        &out.order,
-        &profiles,
-        &out.cells,
-        &cell_refs,
-        &out.consensus,
-        ul,
-    )?;
+    // pass 4: per-cell posteriors
+    let mut post: Option<CellPosteriors> = None;
+    for (lo, hi) in blocks(n_cells, params.block_cells) {
+        let (range, rel) = in_block(&out.cells, lo, hi);
+        if rel.is_empty() {
+            continue;
+        }
+        let part = counts.with_block(lo, hi, |b| {
+            cell_posteriors(
+                b,
+                &out.order,
+                &profiles,
+                &rel,
+                &cell_refs[range.clone()],
+                &out.consensus,
+                ul,
+            )
+        })?;
+        match post.as_mut() {
+            None => {
+                let mut first = part;
+                first.cells = out.cells.clone();
+                let row = first.log_odds.len() / rel.len();
+                first
+                    .log_odds
+                    .reserve_exact(row * (out.cells.len() - rel.len()));
+                post = Some(first);
+            }
+            Some(acc) => {
+                acc.log_odds.extend_from_slice(&part.log_odds);
+                acc.mu.extend_from_slice(&part.mu);
+                acc.sigma.extend_from_slice(&part.sigma);
+            }
+        }
+    }
+    let post = post.expect("cells is non-empty");
     out.entropy = post.entropy();
     out.confident = post
         .segs
@@ -437,6 +611,7 @@ pub fn run_cnv<T: CnvFloat>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::genome::CsrCounts;
     use rand::SeedableRng;
     use rand::rngs::StdRng;
     use rand_distr::{Distribution, LogNormal, Normal, Poisson};
@@ -563,5 +738,94 @@ mod tests {
         assert!(calls.iter().any(|c| c.0 == 2 && c.3 == PostState::Amp));
         assert!(calls.iter().any(|c| c.0 == 3 && c.3 == PostState::Del));
         assert!(acc > 0.95);
+    }
+
+    /// A source that copies each block into its own buffers, as a store would.
+    struct Copying<'a>(CsrCounts<'a>);
+
+    impl CellBlocks for Copying<'_> {
+        fn n_cells(&self) -> usize {
+            self.0.n_cells()
+        }
+
+        fn n_genes(&self) -> usize {
+            self.0.n_genes
+        }
+
+        fn with_block<R>(
+            &self,
+            lo: usize,
+            hi: usize,
+            f: impl FnOnce(&CsrCounts<'_>) -> Result<R, CnvErrors>,
+        ) -> Result<R, CnvErrors> {
+            let (a, b) = (self.0.indptr[lo] as usize, self.0.indptr[hi] as usize);
+            let indptr: Vec<u32> = self.0.indptr[lo..=hi]
+                .iter()
+                .map(|&p| p - a as u32)
+                .collect();
+            let (idx, val) = (self.0.indices[a..b].to_vec(), self.0.data[a..b].to_vec());
+            f(&CsrCounts::new(&indptr, &idx, &val, self.0.n_genes)?)
+        }
+    }
+
+    #[test]
+    fn test_run_cnv_blocks_match_single_pass() {
+        let (indptr, indices, data, chrom, start, end, lambda, truth) = simulate(7);
+        let counts = CsrCounts::new(&indptr, &indices, &data, chrom.len()).unwrap();
+        let normal: Vec<u32> = (0..truth.len() as u32)
+            .filter(|&c| truth[c as usize] == 0)
+            .rev()
+            .collect();
+        let refs = [
+            Reference::Profiles {
+                lambda: &lambda,
+                n_ref: 1,
+            },
+            Reference::Cells(&normal),
+        ];
+        let copied = Copying(counts);
+        for reference in &refs {
+            let params = |block_cells| {
+                Some(CnvParams {
+                    block_cells,
+                    ..Default::default()
+                })
+            };
+            let whole = run_cnv(
+                &counts,
+                &chrom,
+                &start,
+                &end,
+                reference,
+                params(usize::MAX),
+                Verbosity::Quiet,
+            )
+            .unwrap();
+            let blocked = run_cnv(
+                &copied,
+                &chrom,
+                &start,
+                &end,
+                reference,
+                params(37),
+                Verbosity::Quiet,
+            )
+            .unwrap();
+            assert_eq!(whole.cells, blocked.cells);
+            assert_eq!(whole.bins.data, blocked.bins.data);
+            assert_eq!(whole.bins.n_cells, blocked.bins.n_cells);
+            let segs = |r: &CnvResult<f64>| -> Vec<(u32, u32, u32)> {
+                r.consensus.iter().map(|s| (s.chrom, s.lo, s.hi)).collect()
+            };
+            assert_eq!(segs(&whole), segs(&blocked));
+            let (pw, pb) = (whole.posteriors.unwrap(), blocked.posteriors.unwrap());
+            assert_eq!(pw.cells, pb.cells);
+            assert_eq!(pw.log_odds, pb.log_odds);
+            assert_eq!(pw.mu, pb.mu);
+            assert_eq!(
+                whole.clones.unwrap().p_tumour,
+                blocked.clones.unwrap().p_tumour
+            );
+        }
     }
 }
