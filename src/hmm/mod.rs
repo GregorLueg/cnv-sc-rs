@@ -8,6 +8,7 @@
 use rayon::prelude::*;
 
 use crate::errors::CnvErrors;
+use crate::genome::chrom_runs;
 use crate::model::pln::ln_pln;
 use crate::utils::traits::{CnvFloat, wide};
 
@@ -463,33 +464,6 @@ pub fn emission_log_probs<T: CnvFloat>(
     out
 }
 
-/// Contiguous gene ranges per chromosome.
-///
-/// ### Params
-///
-/// * `chrom` - Chromosome per gene
-///
-/// ### Returns
-///
-/// `[lo, hi)` per run of equal ids, or an error if a chromosome reappears
-/// after another one (not genomic order).
-pub(crate) fn chrom_runs(chrom: &[u32]) -> Result<Vec<(usize, usize)>, CnvErrors> {
-    let mut runs: Vec<(usize, usize)> = Vec::new();
-    let mut lo = 0;
-    for i in 1..=chrom.len() {
-        if i == chrom.len() || chrom[i] != chrom[lo] {
-            if runs.iter().any(|&(a, _)| chrom[a] == chrom[lo]) {
-                return Err(CnvErrors::NotGenomicOrder {
-                    what: "chromosome ids are not contiguous",
-                });
-            }
-            runs.push((lo, i));
-            lo = i;
-        }
-    }
-    Ok(runs)
-}
-
 /// Decode one pseudobulk: emissions and Viterbi per chromosome, chromosomes
 /// in parallel (SPEC 5).
 ///
@@ -699,12 +673,5 @@ mod tests {
         assert!(viterbi(&[0.0; 3], &[0.0; 9], &[], m).unwrap().is_empty());
         assert!(viterbi(&[0.0; 2], &[0.0; 9], &[0.0; 3], m).is_err());
         assert!(viterbi(&[0.0; 3], &[0.0; 9], &[0.0; 4], m).is_err());
-    }
-
-    #[test]
-    fn test_chrom_runs_rejects_non_contiguous() {
-        assert_eq!(chrom_runs(&[1, 1, 2, 2, 2]).unwrap(), vec![(0, 2), (2, 5)]);
-        assert!(chrom_runs(&[1, 2, 1]).is_err());
-        assert!(chrom_runs(&[]).unwrap().is_empty());
     }
 }

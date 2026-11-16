@@ -40,8 +40,31 @@ pub enum CnvErrors {
     },
 
     // -- genome --
+    /// A CSR count matrix that is not well formed.
+    #[error("Invalid count matrix: {what}.")]
+    InvalidCounts {
+        /// What is wrong
+        what: &'static str,
+    },
+
+    /// A gene whose end lies before its start.
+    #[error("Gene {gene} has end {end} before start {start}.")]
+    InvalidGeneInterval {
+        /// Caller index of the gene
+        gene: usize,
+        /// Start in bp
+        start: u64,
+        /// End in bp
+        end: u64,
+    },
 
     // -- reference --
+    /// A reference profile or reference cell set that cannot be used.
+    #[error("Invalid reference: {what}.")]
+    InvalidReference {
+        /// What is wrong
+        what: &'static str,
+    },
 
     // -- emission models --
     /// An optimiser hit its iteration cap without meeting its tolerance.

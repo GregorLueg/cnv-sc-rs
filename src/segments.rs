@@ -9,7 +9,8 @@
 use rayon::prelude::*;
 
 use crate::errors::CnvErrors;
-use crate::hmm::{CnState, chrom_runs};
+use crate::genome::chrom_runs;
+use crate::hmm::CnState;
 use crate::model::pln::{LnpoisFit, approx_phi_post, fit_lnpois, l_lnpois_multi};
 use crate::utils::lse::{log_sum_exp, log1mexp};
 use crate::utils::traits::{CnvFloat, wide};
