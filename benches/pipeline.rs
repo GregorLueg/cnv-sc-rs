@@ -15,6 +15,7 @@ use std::time::Instant;
 
 use cnv_sc_rs::cnv::{CnvParams, run_cnv};
 use cnv_sc_rs::genome::CsrCounts;
+use cnv_sc_rs::posterior::effective_state;
 use cnv_sc_rs::prelude::Verbosity;
 use cnv_sc_rs::reference::Reference;
 use rand::rngs::StdRng;
@@ -180,6 +181,22 @@ fn main() {
         peak as f64 / 1e6,
         (indices.len() * 8 + indptr.len() * 4) as f64 / 1e6
     );
+    if let Ok(dir) = std::env::var("CNV_DUMP") {
+        // genes are simulated in genomic order, so genomic index == gene index
+        let mut f =
+            std::io::BufWriter::new(std::fs::File::create(format!("{dir}/segments.tsv")).unwrap());
+        writeln!(f, "chrom\tlo\thi\tstate").unwrap();
+        for s in &res.consensus {
+            let st = format!("{:?}", effective_state(s)).to_lowercase();
+            writeln!(f, "{}\t{}\t{}\t{st}", s.chrom, s.lo, s.hi).unwrap();
+        }
+        let mut f =
+            std::io::BufWriter::new(std::fs::File::create(format!("{dir}/kept.tsv")).unwrap());
+        writeln!(f, "gene").unwrap();
+        for k in &res.bins.kept {
+            writeln!(f, "{k}").unwrap();
+        }
+    }
     match res.clones.as_ref() {
         Some(cl) => {
             let ok = res
