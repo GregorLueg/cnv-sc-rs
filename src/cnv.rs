@@ -485,7 +485,7 @@ mod tests {
             let j = (rand::Rng::random::<u64>(&mut rng) % (i as u64 + 1)) as usize;
             truth.swap(i, j);
         }
-        let noise = Normal::new(0.0, 0.3).unwrap();
+        let noise = Normal::<f64>::new(0.0, 0.3).unwrap();
         let (mut indptr, mut indices, mut data) = (vec![0u32], Vec::new(), Vec::new());
         for &clone in &truth {
             let d = 4_000.0 * (0.5 + rand::Rng::random::<f64>(&mut rng));
