@@ -28,6 +28,7 @@
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod cluster;
+pub mod cnv;
 pub mod errors;
 pub mod genome;
 pub mod hmm;
