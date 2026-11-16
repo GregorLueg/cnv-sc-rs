@@ -442,8 +442,8 @@ fn check_sigma(sigma: f64) -> Result<(), CnvErrors> {
 
 /// Segment loglikelihood (SPEC 4.2).
 ///
-/// `sum_g ln PLN(y_g; mu + ln(phi d lambda_g), sigma)`, accumulated in gene
-/// order.
+/// `sum_g ln PLN(y_g; mu + ln(phi d lambda_g), sigma)`, via
+/// [`l_lnpois_multi`]: swept genes first, then the tabled count groups.
 ///
 /// ### Params
 ///
@@ -505,19 +505,15 @@ pub fn l_lnpois_multi<T: CnvFloat>(
         shifts.push(mu + phi.ln());
     }
     let off = offsets(y, lambda, d, None)?;
-    let g = CountGroups::new(y, &off, phis.len());
+    // one interpolant per count covers every shift
+    let (s_lo, s_hi) = min_max(&shifts);
+    let g = CountGroups::new(y, &off, phis.len(), s_hi - s_lo);
     let mut acc = vec![0.0; phis.len()];
     for (&yg, &og) in g.y.iter().zip(&g.off) {
         for (a, &sh) in acc.iter_mut().zip(&shifts) {
             *a += ln_pln(yg, sh + og, sigma);
         }
     }
-    // one interpolant per count covers every shift
-    let (s_lo, s_hi) = shifts
-        .iter()
-        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| {
-            (a.min(v), b.max(v))
-        });
     for (x, offs) in &g.tabled {
         let (lo, hi) = min_max(offs);
         let it = FusedInterp::new(*x, sigma, s_lo + lo, s_hi + hi);
@@ -603,21 +599,34 @@ impl CountGroups {
     ///
     /// * `y` - Counts
     /// * `off` - Per-gene offsets, same length
-    /// * `n_evals` - Evaluations per gene, so a group is tabled once
-    ///   `size * n_evals >= MIN_TABLE_GENES`
+    /// * `n_evals` - Evaluations per gene
+    /// * `spread` - Width added to each group's `t` range by the shifts it is
+    ///   evaluated at (`ln(phi_max / phi_min)`, zero for one shift)
     ///
     /// ### Returns
     ///
-    /// The split.
-    fn new(y: &[u32], off: &[f64], n_evals: usize) -> Self {
+    /// The split. A group is tabled when its `size * n_evals` evaluations
+    /// exceed both [`MIN_TABLE_GENES`] and the interpolant's node count.
+    fn new(y: &[u32], off: &[f64], n_evals: usize, spread: f64) -> Self {
         let n_tab = MAX_TABLED_COUNT as usize + 1;
         let mut size = vec![0usize; n_tab];
-        for &yg in y {
+        let mut range = vec![(f64::INFINITY, f64::NEG_INFINITY); n_tab];
+        for (&yg, &og) in y.iter().zip(off) {
             if (yg as usize) < n_tab {
-                size[yg as usize] += 1;
+                let k = yg as usize;
+                size[k] += 1;
+                range[k] = (range[k].0.min(og), range[k].1.max(og));
             }
         }
-        let tab = |yg: u32| (yg as usize) < n_tab && size[yg as usize] * n_evals >= MIN_TABLE_GENES;
+        let worth: Vec<bool> = (0..n_tab)
+            .map(|k| {
+                let evals = size[k] * n_evals;
+                let width = range[k].1 - range[k].0 + spread;
+                let nodes = ((width / CHEB_WIDTH).floor() as usize + 1) * (CHEB_DEGREE + 1);
+                evals >= MIN_TABLE_GENES && evals > nodes
+            })
+            .collect();
+        let tab = |yg: u32| (yg as usize) < n_tab && worth[yg as usize];
         let mut groups: Vec<Vec<f64>> = vec![Vec::new(); n_tab];
         let (mut ys, mut offs) = (Vec::new(), Vec::new());
         for (&yg, &og) in y.iter().zip(off) {
@@ -853,7 +862,7 @@ pub fn fit_lnpois<T: CnvFloat>(y: &[u32], lambda: &[T], d: f64) -> Result<Lnpois
     }
     let off = offsets(y, lambda, d, None)?;
     let (mut mu, mut sigma) = moment_start(y, &off);
-    let groups = CountGroups::new(y, &off, 1);
+    let groups = CountGroups::new(y, &off, 1, 0.0);
     let mut cur = sum_grouped(&groups, mu, sigma);
     for iter in 0..FIT_MAX_ITER {
         let (g1, g2) = (cur.d_mu, cur.d_sigma);
