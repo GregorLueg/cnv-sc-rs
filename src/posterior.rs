@@ -451,6 +451,7 @@ pub fn clone_posterior(post: &CellPosteriors, genotypes: &[Vec<GenotypeEvent>]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::segments::Segment;
 
     fn post_one_seg(log_bf: &[f32]) -> CellPosteriors {
         CellPosteriors {
@@ -491,6 +492,115 @@ mod tests {
         };
         let cp = clone_posterior(&post, &[vec![e], vec![e, e], vec![]]);
         assert_eq!(cp.genotypes.len(), 2);
+    }
+
+    /// A consensus segment with retest priors for the posterior parity test.
+    fn seg(chrom: u32, lo: u32, hi: u32, post: PostState, p: [f64; 5]) -> crate::segments::Segment {
+        use crate::hmm::CnState;
+        use crate::segments::Retest;
+        let retest = (post != PostState::Neu).then_some(Retest {
+            phi_hat: 1.0,
+            s_phi: 0.1,
+            llr: 50.0,
+            llr_x: 50.0,
+            p_neu: 0.0,
+            p_loh: p[0],
+            p_amp: p[1],
+            p_del: p[2],
+            p_bamp: p[3],
+            p_bdel: p[4],
+            state_post: post,
+        });
+        Segment {
+            bulk: Some(0),
+            chrom,
+            seg: 1,
+            lo,
+            hi,
+            start: lo as u64 * 1000,
+            end: hi as u64 * 1000,
+            n_genes: hi - lo,
+            state: if post == PostState::Neu {
+                CnState::Neu
+            } else {
+                CnState::Amp1
+            },
+            retest,
+        }
+    }
+
+    #[test]
+    fn test_cell_posteriors_match_numbat() {
+        use crate::reference::tests::read_tsv;
+        let genes = read_tsv("post_genes.tsv");
+        let counts = read_tsv("post_counts.tsv");
+        let n_genes = genes.len();
+        let n_cells = counts[0].len();
+        let chrom: Vec<u32> = genes.iter().map(|r| r[0].parse().unwrap()).collect();
+        let lambda: Vec<f64> = genes.iter().map(|r| r[1].parse().unwrap()).collect();
+        let start: Vec<u64> = (0..n_genes as u64).map(|i| i * 1000).collect();
+        let end: Vec<u64> = start.iter().map(|s| s + 500).collect();
+        let (mut indptr, mut indices, mut data) = (vec![0u32], Vec::new(), Vec::new());
+        for c in 0..n_cells {
+            for (g, row) in counts.iter().enumerate() {
+                let y: u32 = row[c].parse().unwrap();
+                if y > 0 {
+                    indices.push(g as u32);
+                    data.push(y);
+                }
+            }
+            indptr.push(indices.len() as u32);
+        }
+        let csr = CsrCounts::new(&indptr, &indices, &data, n_genes).unwrap();
+        let order = GenomeOrder::new(&chrom, &start, &end).unwrap();
+        let profiles = Profiles {
+            n_ref: 1,
+            lambda: lambda.clone(),
+        };
+        let amp = [0.03, 0.70, 0.02, 0.25, 0.0];
+        let consensus = vec![
+            seg(1, 0, 400, PostState::Neu, [0.0; 5]),
+            seg(1, 400, 600, PostState::Amp, amp),
+            seg(2, 600, 700, PostState::Amp, amp),
+            seg(2, 700, 1200, PostState::Del, [0.10, 0.04, 0.80, 0.0, 0.06]),
+        ];
+        let cells: Vec<u32> = (0..n_cells as u32).collect();
+        let post = cell_posteriors(
+            &csr,
+            &order,
+            &profiles,
+            &cells,
+            &vec![0; n_cells],
+            &consensus,
+            false,
+        )
+        .unwrap();
+        assert_eq!(post.segs, vec![1, 2, 3]);
+        let col = |s: &str| match s {
+            "1b" => 0,
+            "2a" => 1,
+            _ => 2,
+        };
+        let (mut max_fit, mut max_lo) = (0.0f64, 0.0f64);
+        for r in read_tsv("post_expected.tsv") {
+            let c: usize = r[0].parse().unwrap();
+            let f = |i: usize| -> f64 { r[i].to_lowercase().parse().unwrap() };
+            max_fit = max_fit
+                .max(((post.mu[c] as f64) - f(2)).abs())
+                .max(((post.sigma[c] as f64) - f(3)).abs() / f(3));
+            let got = post.at(c, col(&r[1]));
+            for (k, i) in [(COL_LOGBF, 4), (COL_LOH, 5), (COL_DEL, 6), (COL_AMP, 7)] {
+                let (g, w) = (got[k] as f64, f(i));
+                if w == f64::NEG_INFINITY {
+                    assert_eq!(g, w);
+                } else {
+                    max_lo = max_lo.max((g - w).abs() / w.abs().max(1.0));
+                }
+            }
+        }
+        println!("max |dmu|, rel dsigma {max_fit:.2e}; max log-odds diff {max_lo:.2e}");
+        assert!(max_fit < 1e-4);
+        assert!(max_lo < 1e-4);
     }
 
     #[test]
