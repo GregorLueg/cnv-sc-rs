@@ -349,8 +349,12 @@ Each gene maps to its first overlapping segment. No gene filter here.
 Per cell `c`, with reference `r(c)` from 2.3 and `lambda_g = Lambda[g, r(c)]`:
 1. Genes are those with `lambda_g > 0`.
 2. `D_c = sum Y_gc` over those genes.
-3. `(mu_c, sigma_c) = fit_lnpois` on genes in `neu` segments (not loh), with
-   `loh` included when `use_loh` (true if < 5% of genes are neu).
+3. `(mu_c, sigma_c) = fit_lnpois` on genes in `neu` segments, with `loh`
+   segments included when `use_loh`. Here `use_loh` is numbat's
+   `get_exp_post` rule (N/R/main.R:1334-1340): true if < 5% of the genes
+   covered by the consensus are in `neu` segments, not the bp rule of 6.6.
+   States are the effective states above. numbat also drops genes flagged by
+   the allelic LOH segments (`segs_loh`); tier 0 has none.
 4. Per non-neu segment `s`, `l_s(phi) = sum_{g in s} ln PLN(Y_gc; mu_c + ln(phi D_c lambda_g), sigma_c)`
    at `phi` in `{1, 0.5, 1.5, 2, 0.25}`:
    - `l11 = l20 = l(1)`

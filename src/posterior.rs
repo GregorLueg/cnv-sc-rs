@@ -146,6 +146,39 @@ struct Scratch {
     ys: Vec<u32>,
 }
 
+/// Fraction of consensus genes in `neu` segments below which the per-cell
+/// baseline also takes `loh` segments (N/R/main.R:1336).
+pub const POST_USE_LOH_NEU_FRAC: f64 = 0.05;
+
+/// Whether the per-cell baseline includes `loh` segments (SPEC 8.3).
+///
+/// numbat's rule in `get_exp_post`: fewer than [`POST_USE_LOH_NEU_FRAC`] of
+/// the genes covered by the consensus (each counted once, in its first
+/// segment) are in `neu` segments. Distinct from the bp rule of SPEC 6.6.
+///
+/// ### Params
+///
+/// * `consensus` - Consensus segments
+///
+/// ### Returns
+///
+/// `use_loh` for [`cell_posteriors`].
+pub fn posterior_use_loh(consensus: &[Segment]) -> bool {
+    let n = consensus.iter().map(|s| s.hi as usize).max().unwrap_or(0);
+    let mut taken = vec![false; n];
+    let (mut neu, mut all) = (0usize, 0usize);
+    for s in consensus {
+        let is_neu = effective_state(s) == PostState::Neu;
+        for g in s.lo as usize..s.hi as usize {
+            if !std::mem::replace(&mut taken[g], true) {
+                all += 1;
+                neu += is_neu as usize;
+            }
+        }
+    }
+    all > 0 && (neu as f64) < POST_USE_LOH_NEU_FRAC * all as f64
+}
+
 /// Per-cell posteriors over the non-neutral consensus segments (SPEC 8).
 ///
 /// Per cell, with its reference profile: `D_c` over the genes in consensus
@@ -219,8 +252,9 @@ pub fn cell_posteriors(
             let mut taken = vec![false; n_genes];
             for (i, s) in consensus.iter().enumerate() {
                 let is_col = col < n_seg && segs[col] == i;
-                let is_base =
-                    effective_state(s) == PostState::Neu && (use_loh || !s.state.is_loh());
+                // N/R/main.R:1191-1202, tier 0 has no allelic LOH flag
+                let st = effective_state(s);
+                let is_base = st == PostState::Neu || (use_loh && st == PostState::Loh);
                 for gene in s.lo..s.hi {
                     if std::mem::replace(&mut taken[gene as usize], true) {
                         continue;
@@ -233,7 +267,8 @@ pub fn cell_posteriors(
                     if is_col {
                         g.seg[col].push(gene);
                         g.seg_lambda[col].push(l);
-                    } else if is_base {
+                    }
+                    if is_base {
                         g.base.push(gene);
                         g.base_lambda.push(l);
                     }
@@ -662,6 +697,23 @@ mod tests {
         let (overlap, disjoint) = (run(650), run(700));
         assert_eq!(overlap.log_odds, disjoint.log_odds);
         assert_eq!(overlap.mu, disjoint.mu);
+    }
+
+    #[test]
+    fn test_posterior_use_loh_counts_genes_once() {
+        let amp = [0.03, 0.70, 0.02, 0.25, 0.0];
+        // 4 neu genes of 100: under 5%
+        let few = vec![
+            seg(1, 0, 4, PostState::Neu, [0.0; 5]),
+            seg(1, 4, 100, PostState::Amp, amp),
+        ];
+        assert!(posterior_use_loh(&few));
+        // 6 of 100 neu, plus a CNV overlapping the neu genes: still 6 of 100
+        let enough = vec![
+            seg(1, 0, 6, PostState::Neu, [0.0; 5]),
+            seg(1, 0, 100, PostState::Amp, amp),
+        ];
+        assert!(!posterior_use_loh(&enough));
     }
 
     #[test]

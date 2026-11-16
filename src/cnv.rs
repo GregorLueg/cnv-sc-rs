@@ -16,7 +16,7 @@ use crate::genome::{CellBlocks, GenomeOrder};
 use crate::hmm::{BulkHmmInput, CnState, HmmParams, STATES, decode_bulk};
 use crate::posterior::{
     CellPosteriors, ClonePosterior, GenotypeEvent, cell_posteriors, clone_posterior,
-    effective_state,
+    effective_state, posterior_use_loh,
 };
 use crate::reference::{
     Profiles, Reference, choose_ref_cor, filter_genes_from_sums, fit_ref_sse, lambdas_bar,
@@ -535,6 +535,7 @@ pub fn run_cnv<T: CnvFloat>(
         .map(|&c| out.refs[c as usize].expect("kept cells have a reference"))
         .collect();
     // pass 4: per-cell posteriors
+    let post_ul = posterior_use_loh(&out.consensus);
     let mut post: Option<CellPosteriors> = None;
     for (lo, hi) in blocks(n_cells, params.block_cells) {
         let (range, rel) = in_block(&out.cells, lo, hi);
@@ -549,7 +550,7 @@ pub fn run_cnv<T: CnvFloat>(
                 &rel,
                 &cell_refs[range.clone()],
                 &out.consensus,
-                ul,
+                post_ul,
             )
         })?;
         match post.as_mut() {
