@@ -1,0 +1,65 @@
+[package]
+name = "cnv-sc-rs"
+version = "0.1.0"
+edition = "2024"
+authors = ["Gregor Lueg <gregorlueg@me.com>"]
+license = "MIT"
+description = "Copy number inference from single cell expression. A Rust port of the expression path of numbat and hahmmr: inferCNV-style smoothing, Poisson-lognormal HMM, per-cell segment posteriors."
+repository = "https://github.com/GregorLueg/cnv-sc-rs"
+keywords = ["bioinformatics", "single-cell", "copy-number", "hmm", "cancer"]
+categories = [
+    "algorithms",
+    "science::bioinformatics",
+    "science::computational-biology",
+]
+exclude = ["reference/*", "dev/*"]
+
+[lib]
+name = "cnv_sc_rs"
+path = "src/lib.rs"
+
+[dependencies]
+ann-search-rs = "0.12"
+bonsai-rs = "0.3.1"
+libm = "0.2.16"
+num-traits = "0.2.19"
+rayon = "1.11.0"
+rustc-hash = "2.1.1"
+thiserror = "2.0.18"
+wide = "1.4.0"
+cubecl = { version = "0.11.0", features = ["wgpu"], optional = true }
+
+[features]
+## Per-cell Poisson-lognormal stage on the GPU through CubeCL/wgpu.
+gpu = ["dep:cubecl"]
+## The tests that need a wgpu adapter on the machine.
+gpu-tests = ["gpu"]
+
+[dev-dependencies]
+approx = "0.5.1"
+rand = "0.9.2"
+rand_distr = "0.5.1"
+
+[[bench]]
+name = "pln"
+harness = false
+
+[[bench]]
+name = "hmm"
+harness = false
+
+[[bench]]
+name = "smooth"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+
+[profile.test]
+opt-level = 2
+
+[[bench]]
+name = "pipeline"
+harness = false
