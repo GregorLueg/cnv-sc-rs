@@ -131,8 +131,9 @@ Ours: Newton for the mode `m` of the concave `h(z) = z x - e^z -
 (z-mu)^2/(2 sigma^2)`, then Gauss-Hermite with Laplace scaling
 `s = (e^m + 1/sigma^2)^{-1/2}`. The node count is a named constant fixed by
 measurement against a tight-tolerance reference (R `integrate`,
-`rel.tol=1e-12`). Target: relative error <= 1e-6 on the fixture grid. We
-keep the `1e-15` floor, as `ln p >= ln 1e-15`.
+`rel.tol=1e-12`). Target: relative error <= 1e-6 on the fixture grid. No
+floor (**Deviation D9**): our log-density never underflows, and hahmmr only
+replaces an underflowed `p == 0` with `1e-15`, not every `p < 1e-15`.
 
 Note that hahmmr and `poilog::dpoilog` differ by about 4e-7 relative at
 `(x, mu, sigma) = (0, 1, 0.5)`, so parity against hahmmr cannot be tighter
@@ -416,3 +417,4 @@ Defaults (N/R/main.R:68-77):
 | D6 | kNN Ward via bonsai-rs on bins | exact Ward is O(C^2) memory |
 | D7 | 0.05 prior floor is final | no joint step in tier 0 |
 | D8 | clone posterior over leaf genotypes | numbat needs the scistreer tree |
+| D9 | no `1e-15` floor on the PLN density | log-space quadrature never underflows; hahmmr's floor only catches `p == 0` |
