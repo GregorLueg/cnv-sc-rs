@@ -21,6 +21,7 @@ path = "src/lib.rs"
 [dependencies]
 ann-search-rs = "0.12"
 bonsai-rs = "0.3.1"
+libm = "0.2.16"
 num-traits = "0.2.19"
 rayon = "1.11.0"
 rustc-hash = "2.1.1"

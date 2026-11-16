@@ -278,6 +278,9 @@ fold into the kept states.
    `ov/len_y >= 0.45`. Take connected components (union-find). In each
    component, keep **all segments of the one bulk** with the highest summed
    `LLR_x`.
+   **Deviation D10:** the gene-index intervals are global gene indices in
+   genomic order. numbat uses each bulk's own `snp_index`, which is not
+   comparable across bulks with different gene filters.
 3. `fill_neu`: the gaps between kept segments, within chromosome ranges,
    become `neu` segments. Name them `chrom` + letter in order.
 4. The retest-labelled leftovers numbat produces with `retest = TRUE` are
@@ -418,3 +421,4 @@ Defaults (N/R/main.R:68-77):
 | D7 | 0.05 prior floor is final | no joint step in tier 0 |
 | D8 | clone posterior over leaf genotypes | numbat needs the scistreer tree |
 | D9 | no `1e-15` floor on the PLN density | log-space quadrature never underflows; hahmmr's floor only catches `p == 0` |
+| D10 | consensus overlap on global gene indices | numbat's per-bulk `snp_index` differs between bulks |
