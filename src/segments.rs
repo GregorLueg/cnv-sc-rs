@@ -1082,7 +1082,7 @@ pub fn retest_consensus<T: CnvFloat>(
     }
     out.par_iter_mut().zip(&members).try_for_each(|(seg, m)| {
         if seg.state == CnState::Neu || m.is_empty() {
-            return Ok(());
+            return Ok::<(), CnvErrors>(());
         }
         let ys: Vec<u32> = m.iter().map(|&g| bulk.y[g]).collect();
         let ls: Vec<T> = m.iter().map(|&g| bulk.lambda[g]).collect();

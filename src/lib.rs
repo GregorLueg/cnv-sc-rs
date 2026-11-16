@@ -27,6 +27,7 @@
 /// Version of this crate, for bindings that vendor it and need to say which.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod cluster;
 pub mod errors;
 pub mod genome;
 pub mod hmm;

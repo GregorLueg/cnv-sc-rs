@@ -82,5 +82,19 @@ pub enum CnvErrors {
         /// What is out of order
         what: &'static str,
     },
+
+    // -- clustering --
+    /// The kNN-Ward linkage in `bonsai-rs` failed.
+    #[error("Linkage failed: {0}")]
+    Linkage(#[from] bonsai_rs::errors::BonsaiErrors),
+
     // -- posteriors --
+    /// A pseudobulk count exceeds `u32`, the count type of the emissions.
+    #[error("Pseudobulk count {count} of gene {gene} exceeds u32.")]
+    CountOverflow {
+        /// Genomic index of the gene
+        gene: usize,
+        /// The summed count
+        count: u64,
+    },
 }
