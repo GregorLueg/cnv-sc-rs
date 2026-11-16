@@ -32,6 +32,7 @@ pub mod errors;
 pub mod genome;
 pub mod hmm;
 pub mod model;
+pub mod posterior;
 pub mod prelude;
 pub mod reference;
 pub mod segments;
