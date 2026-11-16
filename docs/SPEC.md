@@ -266,8 +266,10 @@ Prior `G = {neu .5, loh .1, del .1, amp .05 + .05, bamp .1, bdel .1}`:
 
 Without alleles `loh` and `neu` are indistinguishable, and `bamp`/`bdel`
 duplicate `amp`/`del`. **Deviation D5:** in tier 0, `loh` maps to `neu`,
-`bamp` to `amp` and `bdel` to `del` after the argmax. Their probabilities
-fold into the kept states.
+`bamp` to `amp` and `bdel` to `del` after the argmax. Probabilities:
+`p_amp += p_bamp`, `p_del += p_bdel`, then `p_bamp = p_bdel = 0`; `p_loh`
+stays as computed. Without the fold `p_amp == p_bamp <= 0.5` always and 6.7
+could never fire.
 
 ### 6.5 Consensus (`get_segs_consensus`, `resolve_cnvs`, `fill_neu_segs`, N/R/main.R:870-1175)
 
@@ -276,8 +278,9 @@ fold into the kept states.
 2. Non-neu segments across bulks: link two segments on the same chromosome
    when their gene-index intervals overlap and `ov/len_x >= 0.45` or
    `ov/len_y >= 0.45`. Take connected components (union-find). In each
-   component, keep **all segments of the one bulk** with the highest summed
-   `LLR_x`.
+   component, take per bulk the max of `LLR_x + LLR_y` over its segments
+   (`LLR_y = 0` in tier 0) and keep **all segments of the one bulk** with the
+   highest value.
    **Deviation D10:** the gene-index intervals are global gene indices in
    genomic order. numbat uses each bulk's own `snp_index`, which is not
    comparable across bulks with different gene filters.
