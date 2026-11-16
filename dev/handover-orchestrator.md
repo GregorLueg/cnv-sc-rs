@@ -23,7 +23,7 @@ Resume after 21:00 when limits reset. Plan: `dev/plan_tier0.md`. Spec:
 |---|---|---|
 | A emissions | `dev/handover-A-emissions.md` | done, cherry-picked (`7503003..f9965c0`). GH s/56 nodes, ~540 ns/call; D9 no floor |
 | B hmm + segments | `dev/handover-B-hmm-segments.md` | done, ff-merged (`d7416b1`, `26ae36d`); D10 added, SPEC 6.5/D5 fixed in `fc00469`; Viterbi 93 ns/gene, emissions 2.7 us/gene |
-| C reference + smoothing | `dev/handover-C-reference-smoothing.md` | running from the commit after `fc00469` |
+| C reference + smoothing | `dev/handover-C-reference-smoothing.md` | done, ff-merged (`0faca1a`, `06553c5`); smoothing 213k cells/s 1 thread, 1.29M cells/s 10 threads at G=10k |
 
 ## A at pause
 
@@ -48,7 +48,11 @@ Resume after 21:00 when limits reset. Plan: `dev/plan_tier0.md`. Spec:
      upstream.
   3. `phi = 2.5` (`l32`) is computed but unused in numbat; leave it out.
 
-## Resume steps
+## Next: M2 (orchestrator)
+
+`cluster.rs`, `posterior.rs`, `cnv.rs`. M1 complete, 47/47 tests.
+
+## Resume steps (historical)
 
 1. `git worktree list` to find A's worktree. Read its
    `dev/status-A-emissions.md` and `git log`.
