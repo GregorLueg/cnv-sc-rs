@@ -1276,6 +1276,30 @@ mod tests {
     }
 
     #[test]
+    fn test_fit_lnpois_edge_sets_vs_hahmmr() {
+        use crate::reference::tests::read_tsv;
+        let lambda: Vec<f64> = read_tsv("pln_fit_edge_lambda.tsv")
+            .iter()
+            .map(|r| r[0].trim().parse().unwrap())
+            .collect();
+        for r in read_tsv("pln_fit_edge.tsv") {
+            let f = |i: usize| -> f64 { r[i].trim().parse().unwrap() };
+            let d = f(1);
+            let (r_mu, r_sig, r_l) = (f(2), f(3), f(4));
+            let y: Vec<u32> = r[5].split(',').map(|v| v.parse().unwrap()).collect();
+            let fit = fit_lnpois(&y, &lambda, d).unwrap();
+            let ours_at_r = l_lnpois(&y, &lambda, d, r_mu, r_sig, 1.0).unwrap();
+            println!(
+                "{}: iter {}, mu {:.6} sigma {:.6} l {:.10} | R mu {:.6} sigma {:.6} l {:.10}",
+                r[0], fit.iterations, fit.mu, fit.sigma, fit.loglik, r_mu, r_sig, r_l
+            );
+            // never worse than hahmmr's optimum, scored by either quadrature
+            assert!(fit.loglik >= r_l - 1e-6 * r_l.abs());
+            assert!(fit.loglik >= ours_at_r - 1e-9 * ours_at_r.abs());
+        }
+    }
+
+    #[test]
     fn test_fit_lnpois_sigma_bound() {
         // constant counts at the expected rate push sigma to its bound
         let n = 200;
