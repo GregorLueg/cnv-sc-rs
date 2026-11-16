@@ -32,7 +32,8 @@ impl<'a> CsrCounts<'a> {
     /// ### Params
     ///
     /// * `indptr` - Row offsets, length `n_cells + 1`, non-decreasing, from 0
-    /// * `indices` - Gene index per nonzero, caller order
+    /// * `indices` - Gene index per nonzero, caller order, unique within a
+    ///   row (any order)
     /// * `data` - Count per nonzero
     /// * `n_genes` - Number of genes
     ///
@@ -68,6 +69,20 @@ impl<'a> CsrCounts<'a> {
         if indices.iter().any(|&j| j as usize >= n_genes) {
             return Err(CnvErrors::InvalidCounts {
                 what: "gene index out of range",
+            });
+        }
+        let dup = indptr.par_windows(2).any(|w| {
+            let row = &indices[w[0] as usize..w[1] as usize];
+            if row.windows(2).all(|p| p[0] < p[1]) {
+                return false;
+            }
+            let mut r = row.to_vec();
+            r.sort_unstable();
+            r.windows(2).any(|p| p[0] == p[1])
+        });
+        if dup {
+            return Err(CnvErrors::InvalidCounts {
+                what: "duplicate gene index within a cell",
             });
         }
         Ok(Self {
@@ -472,5 +487,13 @@ mod tests {
         assert_eq!(m.gene_sums(None).unwrap(), vec![1, 0, 9]);
         assert_eq!(m.gene_sums(Some(&[1])).unwrap(), vec![0, 0, 5]);
         assert!(m.gene_sums(Some(&[2])).is_err());
+    }
+
+    #[test]
+    fn test_csr_rejects_duplicate_gene_in_row() {
+        let ok = CsrCounts::new(&[0, 3], &[2, 0, 1], &[1, 1, 1], 3);
+        assert!(ok.is_ok());
+        let dup = CsrCounts::new(&[0, 3], &[2, 0, 2], &[1, 1, 1], 3);
+        assert!(matches!(dup, Err(CnvErrors::InvalidCounts { .. })));
     }
 }
