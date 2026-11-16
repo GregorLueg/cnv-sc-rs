@@ -215,11 +215,16 @@ pub fn cell_posteriors(
                 all: Vec::new(),
             };
             let mut col = 0;
+            // a gene belongs to its first overlapping segment (N/R/main.R:1262)
+            let mut taken = vec![false; n_genes];
             for (i, s) in consensus.iter().enumerate() {
                 let is_col = col < n_seg && segs[col] == i;
                 let is_base =
                     effective_state(s) == PostState::Neu && (use_loh || !s.state.is_loh());
                 for gene in s.lo..s.hi {
+                    if std::mem::replace(&mut taken[gene as usize], true) {
+                        continue;
+                    }
                     let l = lam[gene as usize];
                     if l <= 0.0 {
                         continue;
@@ -601,6 +606,62 @@ mod tests {
         println!("max |dmu|, rel dsigma {max_fit:.2e}; max log-odds diff {max_lo:.2e}");
         assert!(max_fit < 1e-4);
         assert!(max_lo < 1e-4);
+    }
+
+    #[test]
+    fn test_cell_posteriors_overlap_first_segment_owns_genes() {
+        use crate::reference::tests::read_tsv;
+        let genes = read_tsv("post_genes.tsv");
+        let counts = read_tsv("post_counts.tsv");
+        let (n_genes, n_cells) = (genes.len(), counts[0].len());
+        let chrom: Vec<u32> = genes.iter().map(|r| r[0].parse().unwrap()).collect();
+        let lambda: Vec<f64> = genes.iter().map(|r| r[1].parse().unwrap()).collect();
+        let start: Vec<u64> = (0..n_genes as u64).map(|i| i * 1000).collect();
+        let end: Vec<u64> = start.iter().map(|s| s + 500).collect();
+        let (mut indptr, mut indices, mut data) = (vec![0u32], Vec::new(), Vec::new());
+        for c in 0..n_cells {
+            for (g, row) in counts.iter().enumerate() {
+                let y: u32 = row[c].parse().unwrap();
+                if y > 0 {
+                    indices.push(g as u32);
+                    data.push(y);
+                }
+            }
+            indptr.push(indices.len() as u32);
+        }
+        let csr = CsrCounts::new(&indptr, &indices, &data, n_genes).unwrap();
+        let order = GenomeOrder::new(&chrom, &start, &end).unwrap();
+        let profiles = Profiles { n_ref: 1, lambda };
+        let amp = [0.03, 0.70, 0.02, 0.25, 0.0];
+        let cells: Vec<u32> = (0..n_cells as u32).collect();
+        let run = |second_lo: u32| {
+            let consensus = vec![
+                seg(1, 0, 400, PostState::Neu, [0.0; 5]),
+                seg(1, 400, 600, PostState::Amp, amp),
+                seg(2, 600, 700, PostState::Amp, amp),
+                seg(
+                    2,
+                    second_lo,
+                    1200,
+                    PostState::Del,
+                    [0.10, 0.04, 0.80, 0.0, 0.06],
+                ),
+            ];
+            cell_posteriors(
+                &csr,
+                &order,
+                &profiles,
+                &cells,
+                &vec![0; n_cells],
+                &consensus,
+                false,
+            )
+            .unwrap()
+        };
+        // genes 650..700 lie in both chr 2 segments; the first one owns them
+        let (overlap, disjoint) = (run(650), run(700));
+        assert_eq!(overlap.log_odds, disjoint.log_odds);
+        assert_eq!(overlap.mu, disjoint.mu);
     }
 
     #[test]
