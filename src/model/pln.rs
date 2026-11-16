@@ -58,6 +58,10 @@ const MODE_TOL: f64 = 1e-10;
 /// Iteration cap for [`fit_lnpois`]. Our choice; typical fits take under 15.
 const FIT_MAX_ITER: usize = 200;
 
+/// Upper clamp on the moment start's `sigma`: one outlying count can inflate
+/// the pooled variance. Our choice.
+const MOMENT_SIGMA_MAX: f64 = 3.0;
+
 /// Step halvings per line search in [`fit_lnpois`]. Our choice.
 const FIT_MAX_HALVINGS: usize = 60;
 
@@ -560,9 +564,43 @@ pub struct LnpoisFit {
     pub iterations: usize,
 }
 
+/// Method-of-moments start for [`fit_lnpois`].
+///
+/// With `m_g = exp(off_g)` and `k = E[e^z] = exp(mu + sigma^2 / 2)`:
+/// `E[y_g] = k m_g` and `Var[y_g] = k m_g + k^2 m_g^2 (exp(sigma^2) - 1)`,
+/// pooled over genes. Only moves Newton's start, not its optimum.
+///
+/// ### Params
+///
+/// * `y` - Counts
+/// * `off` - Per-gene offsets `ln(d lambda_g)`
+///
+/// ### Returns
+///
+/// `(mu, sigma)`, with `sigma` clamped to `[SIGMA_MIN, MOMENT_SIGMA_MAX]`;
+/// `(0, 1)` if the counts are all zero.
+fn moment_start(y: &[u32], off: &[f64]) -> (f64, f64) {
+    let (sy, sm) = y
+        .iter()
+        .zip(off)
+        .fold((0.0, 0.0), |(a, b), (&yg, &o)| (a + yg as f64, b + o.exp()));
+    if sy <= 0.0 {
+        return (0.0, 1.0);
+    }
+    let k = sy / sm;
+    let (num, den) = y.iter().zip(off).fold((0.0, 0.0), |(a, b), (&yg, &o)| {
+        let m = k * o.exp();
+        let r = yg as f64 - m;
+        (a + r * r - m, b + m * m)
+    });
+    let s2 = (num / den).max(0.0).ln_1p();
+    let sigma = s2.sqrt().clamp(SIGMA_MIN, MOMENT_SIGMA_MAX);
+    (k.ln() - 0.5 * sigma * sigma, sigma)
+}
+
 /// Maximum-likelihood `(mu, sigma)` of the PLN at `phi = 1` (SPEC 4.3).
 ///
-/// Bounded Newton from `(0, 1)` with `sigma >= SIGMA_MIN`, analytic gradient
+/// Bounded Newton from the moment start ([`moment_start`]) with `sigma >= SIGMA_MIN`, analytic gradient
 /// and Hessian from [`ln_pln_fused`], and a backtracking line search. Where
 /// the Hessian is not negative definite the step falls back to a diagonally
 /// scaled gradient step. On the bound with the gradient pointing out,
@@ -584,7 +622,7 @@ pub fn fit_lnpois<T: CnvFloat>(y: &[u32], lambda: &[T], d: f64) -> Result<Lnpois
         });
     }
     let off = offsets(y, lambda, d, None)?;
-    let (mut mu, mut sigma) = (0.0, 1.0);
+    let (mut mu, mut sigma) = moment_start(y, &off);
     let mut cur = sum_fused(y, &off, mu, sigma);
     for iter in 0..FIT_MAX_ITER {
         let (g1, g2) = (cur.d_mu, cur.d_sigma);
