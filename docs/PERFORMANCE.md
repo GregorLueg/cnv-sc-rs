@@ -39,10 +39,20 @@ fit by at most 1.5e-6, within `FIT_TOL`.
 
 ### infercnvpy 0.6.1 on the same matrix
 
-Given the true normal cells as reference. `infercnv` 4.6 s, then PCA,
-neighbours, Leiden and score 80.5 s (first call, may include compilation),
-peak RSS 1.68 GB. No HMM, segments or per-cell probabilities, so not like for
-like.
+10k genes, 10 threads/jobs. infercnvpy gets the true normal cells as
+reference and an untimed warm-up on 1000 cells, so compilation is excluded
+(the first cold run at 10k took 85 s). It has no HMM, segments or per-cell
+probabilities, so this is not like for like. Peak RSS is the whole process:
+ours includes the simulation and the text dump, infercnvpy's the warm-up.
+
+| cells | ours total | infercnvpy `infercnv` | infercnvpy PCA to score | infercnvpy total | ours peak RSS | infercnvpy peak RSS |
+|---|---|---|---|---|---|---|
+| 10k | 3.83 s | 4.87 s | 19.5 s | 24.4 s | 0.73 GB | 1.95 GB |
+| 20k | 7.55 s | 5.54 s | 42.6 s | 48.1 s | 1.45 GB | 3.15 GB |
+
+At 20k our per-stage seconds: smoothing 0.06, clustering 1.06, bulk HMMs
+0.21, consensus 0.11, cell posteriors 6.12; peak heap above the 349 MB input
+103 MB. Tumour/normal accuracy 0.966 (10k) and 0.965 (20k).
 
 ## PLN quadrature (`GH_NODES`)
 
