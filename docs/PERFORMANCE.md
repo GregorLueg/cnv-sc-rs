@@ -114,6 +114,12 @@ to 3, `sigma` 0.01 to 3, worst relative to `max(1, |f|)`, for `ln p` /
 Degree 12 at width 2 cut the fit from 2.40 to 2.05 ms per cell against
 degree 16, with bit-identical f32 posteriors.
 
+A group is tabled only when its evaluations exceed the interpolant's node
+count. On the 1000-cell case (segments of 200 and 250 genes) this changed
+nothing: fit 2.06 ms, segment likelihoods 0.28 ms per cell, `mu` and `sigma`
+bit-identical. The case it guards, small segments with a wide `t` spread, is
+not measured.
+
 ## Smoothing (`benches/smooth.rs`)
 
 G = 10k genes, 5% density: 213k cells/s on one thread (about 5 us per cell),
