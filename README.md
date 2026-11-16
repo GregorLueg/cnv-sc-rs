@@ -26,7 +26,8 @@ full list, with numbat file and line for every piece.
   neu/amp/del for now (SPEC 11, D5).
 - No clone phylogeny. Tier 2. Until then the clone posterior runs over leaf
   genotypes (D8).
-- No GPU code yet. The `gpu` feature is declared and nothing uses it.
+- No GPU path. On 10 threads the per-cell stage runs at 0.3 ms per cell, so
+  there is nothing yet for a GPU to win.
 
 ## Usage
 

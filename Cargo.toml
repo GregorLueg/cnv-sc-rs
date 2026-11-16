@@ -27,13 +27,6 @@ rayon = "1.11.0"
 rustc-hash = "2.1.1"
 thiserror = "2.0.18"
 wide = "1.4.0"
-cubecl = { version = "0.11.0", features = ["wgpu"], optional = true }
-
-[features]
-## Per-cell Poisson-lognormal stage on the GPU through CubeCL/wgpu.
-gpu = ["dep:cubecl"]
-## The tests that need a wgpu adapter on the machine.
-gpu-tests = ["gpu"]
 
 [dev-dependencies]
 approx = "0.5.1"
