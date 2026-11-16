@@ -142,15 +142,15 @@ replaces an underflowed `p == 0` with `1e-15`, not every `p < 1e-15`.
 
 Note that hahmmr and `poilog::dpoilog` differ by about 4e-7 relative at
 `(x, mu, sigma) = (0, 1, 0.5)`, so parity against hahmmr cannot be tighter
-than its own quadrature (measured 2026-11-16).
+than its own quadrature.
 
 Sums over many genes with the same small count `x` (0 to 3) do not run the
 quadrature per gene. At fixed `x` and `sigma`, the density and its
 derivatives depend on the gene only through `t = mu + ln(phi d lambda_g)`,
 so the quadrature runs at the nodes of piecewise Chebyshev panels covering
 the group's `t` range, and each gene is interpolated. The interpolation
-error is far below the quadrature's own (constants and measurements in
-`src/model/pln.rs`). This approximates the quadrature, not numbat, so it is
+error is far below the quadrature's own (measurements in
+`docs/PERFORMANCE.md`). This approximates the quadrature, not numbat, so it is
 not a deviation. It applies to `fit_lnpois` (4.3) and `l_lnpois` (4.2).
 
 ### 4.2 Segment loglikelihood (H/R/distributions.R:53-57)

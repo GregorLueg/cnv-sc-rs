@@ -15,8 +15,7 @@ use crate::utils::traits::{CnvFloat, narrow};
 /// Scale from proportions to counts per million (N/R/utils.R:113).
 const CPM: f64 = 1e6;
 
-/// Minimum cells per rayon task. Ours, not swept: a cell costs about 5 us
-/// on one thread at G = 10k, 5% density (benches/smooth.rs, 2026-11-16).
+/// Minimum cells per rayon task. Ours, not swept.
 const CELL_MIN_LEN: usize = 64;
 
 //////////////////

@@ -64,8 +64,9 @@ from running R, never from memory.**
   `### Returns`.
 - One `thiserror` enum in `src/errors.rs`; add to the matching section.
 - Tuning constants are named `const`s whose doc comment gives the source: a
-  numbat/hahmmr file:line, or our measurement with the date.
+  numbat/hahmmr file:line, or "our choice". Measurements, timings and speed
+  comparisons go in `docs/PERFORMANCE.md`, never in code comments.
 - `wide` types only in `src/utils/simd.rs`. No SIMD tier without a
-  measurement in its doc comment.
+  measurement in `docs/PERFORMANCE.md`.
 - Benches: plain `main`, `harness = false`. Check the output before reporting
   a timing. Measure a stage's share of the whole before optimising it.

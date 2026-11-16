@@ -19,21 +19,8 @@ use crate::utils::traits::{CnvFloat, wide};
 // Consts //
 ////////////
 
-/// Gauss-Hermite node count for the PLN density (SPEC 4.1).
-///
-/// Measured 2026-11-16, max relative error in `p` against R
-/// `integrate` at `rel.tol = 1e-12`, on `pln_grid.tsv` (175 points, SPEC
-/// grid) / `pln_random.tsv` (400 held-out points, sigma up to 2.5):
-/// 32 nodes 3.0e-6 / 7.0e-6, 40 nodes 8.6e-7 / 2.6e-6, 48 nodes 2.6e-7 /
-/// 1.1e-6, 56 nodes 8.7e-8 / 4.2e-7, 64 nodes 3.2e-8 / 9.8e-8. The worst
-/// points are always `x <= 2` with `sigma >= 2`, where the posterior of the
-/// log-rate is cut off sharply on the right. 56 is the smallest tested count
-/// under 1e-6 on both sets.
-///
-/// Narrowing the nodes to `0.8 s` was measured too: 32 nodes 1.8e-7 / 5.5e-7
-/// at 360 ns per `ln_pln` call against 536 ns for 56 nodes at `s`, 40 nodes
-/// 3.7e-8 / 4.8e-8 at 419 ns (`benches/pln.rs`). Not adopted: SPEC 4.1 fixes
-/// `s`, and at 32 nodes the held-out error is worse than here.
+/// Gauss-Hermite node count for the PLN density (SPEC 4.1). The smallest
+/// count under 1e-6 relative error; see `docs/PERFORMANCE.md`.
 pub const GH_NODES: usize = 56;
 
 /// Lower bound on `sigma` in [`fit_lnpois`] (H/src/mle.cpp:45).
@@ -570,33 +557,20 @@ fn sum_fused(y: &[u32], off: &[f64], mu: f64, sigma: f64) -> PlnDerivs {
 //////////////////////
 
 /// Largest count whose genes are summed through an interpolant in
-/// [`CountGroups`]. Counts above it are swept with [`ln_pln_fused`].
-///
-/// Measured 2026-11-16, `benches/pipeline.rs`, 1000 cells x 10k genes, one
-/// thread, fit per cell: 21.7 ms without interpolants, 6.16 ms tabling
-/// zeros, 3.34 ms up to 1, 2.40 ms up to 3, 2.33 ms up to 6 (degree 16).
-/// Three is the largest count `test_fused_interp_matches_quadrature` covers.
+/// [`CountGroups`]. Counts above it are swept with [`ln_pln_fused`]. Three is
+/// the largest count `test_fused_interp_matches_quadrature` covers.
 const MAX_TABLED_COUNT: u32 = 3;
 
 /// Smallest group worth an interpolant: below it the node evaluations cost
 /// more than the sweep. Our choice, about four panels of nodes.
 const MIN_TABLE_GENES: usize = 64;
 
-/// Chebyshev degree per panel.
-///
-/// Measured 2026-11-16 against [`ln_pln_fused`] over `t` in `[-12, 4]`,
-/// counts 0 to 3, `sigma` 0.01 to 3, worst error relative to `max(1, |f|)`
-/// of `ln p` / `d_sigma` / `d2_sigma`, at [`CHEB_WIDTH`] 2: degree 16
-/// 3.7e-13 / 5.5e-13 / 7.1e-11, degree 12 1.7e-10 / 3.1e-9 / 7.3e-8,
-/// degree 10 3.4e-9 / 2.4e-7 / 1.3e-6. All far under the quadrature's own
-/// error (see [`GH_NODES`]). Degree 12 cut the fit from 2.40 to 2.05 ms per
-/// cell against 16, with the f32 posteriors of 1000 cells bit-identical.
+/// Chebyshev degree per panel. Chosen with [`CHEB_WIDTH`] so the
+/// interpolation error stays far under the quadrature's; see
+/// `docs/PERFORMANCE.md`.
 const CHEB_DEGREE: usize = 12;
 
 /// Panel width in `t = mu + off`.
-///
-/// Measured 2026-11-16 at degree 16: width 1 worst 8.0e-11, width 2
-/// 7.1e-11, width 4 1.9e-6 (on `d2_sigma`).
 const CHEB_WIDTH: f64 = 2.0;
 
 /// Fused terms per node: `ln p` and the five derivatives of [`PlnDerivs`].
@@ -1385,7 +1359,7 @@ mod tests {
             }
         }
         println!("worst {:?}", worst.map(|w| format!("{w:.2e}")));
-        // ln p, then the derivatives; measured worst at degree 12 is 7.3e-8
+        // ln p, then the derivatives
         let tol = [1e-9, 1e-9, 1e-8, 1e-8, 1e-8, 1e-6];
         for f in 0..N_FORMS {
             assert!(worst[f] < tol[f], "form {f}: {:.2e}", worst[f]);
