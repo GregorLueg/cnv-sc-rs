@@ -43,6 +43,10 @@ rand_distr = "0.5.1"
 name = "pln"
 harness = false
 
+[[bench]]
+name = "hmm"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = "thin"

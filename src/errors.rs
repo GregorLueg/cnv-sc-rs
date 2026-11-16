@@ -53,6 +53,11 @@ pub enum CnvErrors {
         iterations: usize,
     },
     // -- hmm and segments --
-
+    /// Genes, segments or chromosomes are not in genomic order.
+    #[error("Input not in genomic order: {what}.")]
+    NotGenomicOrder {
+        /// What is out of order
+        what: &'static str,
+    },
     // -- posteriors --
 }
