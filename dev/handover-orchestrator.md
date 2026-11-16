@@ -48,9 +48,18 @@ Resume after 21:00 when limits reset. Plan: `dev/plan_tier0.md`. Spec:
      upstream.
   3. `phi = 2.5` (`l32`) is computed but unused in numbat; leave it out.
 
-## Next: M2 (orchestrator)
+## M2 done (2026-11-16)
 
-`cluster.rs`, `posterior.rs`, `cnv.rs`. M1 complete, 47/47 tests.
+- `cluster.rs` (`4d5dea1`): top-down cut of bonsai `linkage_tree` by between-children SS (Ward cost); bonsai sets branches to 1, so heights are recomputed lazily.
+- `posterior.rs` (`ab15122`, parity `27ff23b`): per cell x non-neu segment f32 log-odds [logBF, loh, del, amp]; clone posterior uses only these (Z_n sum cancels). Parity vs numbat get_exp_likelihoods + compute_posterior: mu/sigma 2.2e-6, log-odds 1.3e-5 rel.
+- `cnv.rs` (`6913bbb`, `ea87290`): `run_cnv`, stage timings at Verbosity::Normal. Simulation (600 cells, 3000 genes, 2 clones): exact segment recovery, tumour/normal 1.000, clone 1.000.
+- Stage split on that small case (10 threads): reference 0.00 s, smoothing 0.00, clustering 0.01, bulk HMMs 0.09, consensus 0.10, cell posteriors 1.24 s.
+
+## Next
+
+- M3: pick a public dataset with known CNVs with Gregor; infercnvpy comparison.
+- M4: stage split at a larger size (report before scaling); target is the per-cell PLN stage.
+- Open decisions for Gregor: GH quadrature 0.8*s/40 nodes (22% faster, more accurate) vs SPEC s/56; LOH fold under D5.
 
 ## Resume steps (historical)
 
