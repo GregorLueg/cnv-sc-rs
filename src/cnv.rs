@@ -772,26 +772,46 @@ mod tests {
     #[test]
     fn test_run_cnv_blocks_match_single_pass() {
         let (indptr, indices, data, chrom, start, end, lambda, truth) = simulate(7);
+        // two empty cells first: with one-cell blocks, the leading blocks have
+        // no kept cells
+        let n_empty = 2u32;
+        let indptr: Vec<u32> = std::iter::repeat_n(0, n_empty as usize)
+            .chain(indptr)
+            .collect();
         let counts = CsrCounts::new(&indptr, &indices, &data, chrom.len()).unwrap();
         let normal: Vec<u32> = (0..truth.len() as u32)
             .filter(|&c| truth[c as usize] == 0)
+            .map(|c| c + n_empty)
             .rev()
             .collect();
+        // a second profile with chr 4 shifted, renormalised
+        let mut second: Vec<f64> = lambda
+            .iter()
+            .zip(&chrom)
+            .map(|(&l, &c)| if c == 4 { 1.6 * l } else { l })
+            .collect();
+        let tot: f64 = second.iter().sum();
+        second.iter_mut().for_each(|l| *l /= tot);
+        let two: Vec<f64> = lambda.iter().chain(&second).copied().collect();
         let refs = [
             Reference::Profiles {
                 lambda: &lambda,
                 n_ref: 1,
             },
+            Reference::Profiles {
+                lambda: &two,
+                n_ref: 2,
+            },
             Reference::Cells(&normal),
         ];
         let copied = Copying(counts);
-        for reference in &refs {
-            let params = |block_cells| {
-                Some(CnvParams {
-                    block_cells,
-                    ..Default::default()
-                })
-            };
+        let params = |block_cells| {
+            Some(CnvParams {
+                block_cells,
+                ..Default::default()
+            })
+        };
+        for (k, reference) in refs.iter().enumerate() {
             let whole = run_cnv(
                 &counts,
                 &chrom,
@@ -802,31 +822,45 @@ mod tests {
                 Verbosity::Quiet,
             )
             .unwrap();
-            let blocked = run_cnv(
-                &copied,
-                &chrom,
-                &start,
-                &end,
-                reference,
-                params(37),
-                Verbosity::Quiet,
-            )
-            .unwrap();
-            assert_eq!(whole.cells, blocked.cells);
-            assert_eq!(whole.bins.data, blocked.bins.data);
-            assert_eq!(whole.bins.n_cells, blocked.bins.n_cells);
-            let segs = |r: &CnvResult<f64>| -> Vec<(u32, u32, u32)> {
-                r.consensus.iter().map(|s| (s.chrom, s.lo, s.hi)).collect()
-            };
-            assert_eq!(segs(&whole), segs(&blocked));
-            let (pw, pb) = (whole.posteriors.unwrap(), blocked.posteriors.unwrap());
-            assert_eq!(pw.cells, pb.cells);
-            assert_eq!(pw.log_odds, pb.log_odds);
-            assert_eq!(pw.mu, pb.mu);
-            assert_eq!(
-                whole.clones.unwrap().p_tumour,
-                blocked.clones.unwrap().p_tumour
-            );
+            assert!(whole.cells.iter().all(|&c| c >= n_empty));
+            if k == 1 {
+                // both profiles are chosen by some cells, so the per-cell
+                // reference path is exercised
+                for r in 0..2 {
+                    assert!(whole.refs.contains(&Some(r)), "profile {r} unused");
+                }
+            }
+            for block_cells in [37, 1] {
+                let blocked = run_cnv(
+                    &copied,
+                    &chrom,
+                    &start,
+                    &end,
+                    reference,
+                    params(block_cells),
+                    Verbosity::Quiet,
+                )
+                .unwrap();
+                assert_eq!(whole.refs, blocked.refs);
+                assert_eq!(whole.cells, blocked.cells);
+                assert_eq!(whole.bins.data, blocked.bins.data);
+                assert_eq!(whole.bins.n_cells, blocked.bins.n_cells);
+                let segs = |r: &CnvResult<f64>| -> Vec<(u32, u32, u32)> {
+                    r.consensus.iter().map(|s| (s.chrom, s.lo, s.hi)).collect()
+                };
+                assert_eq!(segs(&whole), segs(&blocked));
+                let (pw, pb) = (
+                    whole.posteriors.as_ref().unwrap(),
+                    blocked.posteriors.as_ref().unwrap(),
+                );
+                assert_eq!(pw.cells, pb.cells);
+                assert_eq!(pw.log_odds, pb.log_odds);
+                assert_eq!(pw.mu, pb.mu);
+                assert_eq!(
+                    whole.clones.as_ref().unwrap().p_tumour,
+                    blocked.clones.as_ref().unwrap().p_tumour
+                );
+            }
         }
     }
 }
