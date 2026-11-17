@@ -29,7 +29,8 @@ proportions (columns sum to 1). `LSE` log-sum-exp. `ln` natural log.
 - Exclusion intervals `(chrom, start, end)`: genes overlapping any are
   dropped. numbat hard-codes MHC as `CHROM==6 & gene_start < 33480577 &
   gene_end > 28510120` (N/R/utils.R:137-167). The crate takes the intervals
-  as a parameter; the R layer passes MHC per build.
+  as a parameter. `EXCLUDE_HG38` (the default) and `EXCLUDE_HG19` hold MHC
+  plus the six IG/TR loci (**Deviation D11**).
 - Cells with zero total count are dropped (N/R/main.R:113-118).
 
 ## 2. Reference
@@ -453,3 +454,4 @@ Defaults (N/R/main.R:68-77):
 | D8 | clone posterior over leaf genotypes | numbat needs the scistreer tree |
 | D9 | no `1e-15` floor on the PLN density | log-space quadrature never underflows; hahmmr's floor only catches `p == 0` |
 | D10 | consensus overlap on global gene indices | numbat's per-bulk `snp_index` differs between bulks |
+| D11 | IGH, IGK, IGL, TRA/TRD, TRB, TRG loci excluded with MHC | numbat's refGene GTF has no IG genes there; with a full annotation, plasma and T cell receptor expression is called as CNV against a pooled reference (GSE148673 ATC2: 0.175 to 0.978 agreement) |

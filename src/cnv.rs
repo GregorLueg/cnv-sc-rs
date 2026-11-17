@@ -12,7 +12,7 @@ use bonsai_rs::tree::linkage::LinkageParams;
 
 use crate::cluster::{Group, ward_groups};
 use crate::errors::CnvErrors;
-use crate::genome::{CellBlocks, GenomeOrder};
+use crate::genome::{CellBlocks, EXCLUDE_HG38, GenomeOrder};
 use crate::hmm::{BulkHmmInput, CnState, HmmParams, STATES, decode_bulk};
 use crate::posterior::{
     CellPosteriors, ClonePosterior, GenotypeEvent, cell_posteriors, clone_posterior,
@@ -45,7 +45,8 @@ pub const BLOCK_CELLS: usize = 8192;
 /// Parameters of [`run_cnv`]. Defaults are numbat's (N/R/main.R:68-77).
 #[derive(Clone, Debug)]
 pub struct CnvParams {
-    /// Genes overlapping any `(chrom, start, end)` are excluded (MHC; SPEC 1)
+    /// Genes overlapping any `(chrom, start, end)` are excluded (SPEC 1);
+    /// [`EXCLUDE_HG38`] by default, [`EXCLUDE_HG19`](crate::genome::EXCLUDE_HG19) for GRCh37
     pub exclude: Vec<(u32, u64, u64)>,
     /// Smoothing and binning (SPEC 3)
     pub smooth: SmoothParams,
@@ -72,7 +73,7 @@ pub struct CnvParams {
 impl Default for CnvParams {
     fn default() -> Self {
         Self {
-            exclude: Vec::new(),
+            exclude: EXCLUDE_HG38.to_vec(),
             smooth: SmoothParams::default(),
             init_k: 3,
             min_cells: 50,

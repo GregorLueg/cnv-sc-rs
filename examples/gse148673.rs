@@ -1,7 +1,7 @@
 //! `run_cnv` on one GSE148673 sample (Gao et al., CopyKat, 2021).
 //!
 //! ```bash
-//! cargo run --release --example gse148673 -- <sample.txt> <genes.tsv>
+//! cargo run --release --example gse148673 -- <sample.txt> <genes.tsv> <hg19|hg38>
 //! ```
 //!
 //! `sample.txt` is a decompressed `*_combined_UMIcount_CellTypes_*.txt`:
@@ -10,6 +10,7 @@
 //! `symbol chrom start end biotype` without header: GENCODE v19 for the
 //! hg19 samples (DCIS1, TNBC1-3), Ensembl 93 for the rest. Only symbols on
 //! chromosomes 1 to 22 are kept; a duplicated symbol keeps its first locus.
+//! The build picks the exclusion intervals (`EXCLUDE_HG19` or `EXCLUDE_HG38`).
 //!
 //! The copykat `N` cells are the reference. With `CNV_POST=<file>` the
 //! posteriors are written as little-endian `f32`: `mu`, `sigma`, then
@@ -20,7 +21,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::time::Instant;
 
 use cnv_sc_rs::cnv::{CnvParams, run_cnv};
-use cnv_sc_rs::genome::CsrCounts;
+use cnv_sc_rs::genome::{CsrCounts, EXCLUDE_HG19, EXCLUDE_HG38};
 use cnv_sc_rs::prelude::Verbosity;
 use cnv_sc_rs::reference::Reference;
 
@@ -59,6 +60,11 @@ fn read_genes(path: &str) -> HashMap<String, (u32, u64, u64)> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let (sample, genes_path) = (&args[1], &args[2]);
+    let exclude = match args[3].as_str() {
+        "hg19" => EXCLUDE_HG19.to_vec(),
+        "hg38" => EXCLUDE_HG38.to_vec(),
+        other => panic!("build must be hg19 or hg38, got {other}"),
+    };
     let t = Instant::now();
     let loci = read_genes(genes_path);
 
@@ -126,7 +132,10 @@ fn main() {
         &start,
         &end,
         &reference,
-        Some(CnvParams::default()),
+        Some(CnvParams {
+            exclude,
+            ..CnvParams::default()
+        }),
         Verbosity::Normal,
     )
     .unwrap();

@@ -9,6 +9,38 @@ use rayon::prelude::*;
 
 use crate::errors::CnvErrors;
 
+/////////////////////////
+// Exclusion intervals //
+/////////////////////////
+
+/// Default exclusion intervals on GRCh38 (SPEC 1, **Deviation D11**).
+///
+/// MHC is numbat's (N/R/utils.R:147-149). The IG/TR loci span the
+/// `IG_*`/`TR_*` biotype genes of Ensembl 93, orphons left out: TRA/TRD,
+/// IGH, IGK, IGL, TRG, TRB.
+pub const EXCLUDE_HG38: [(u32, u64, u64); 7] = [
+    (6, 28_510_120, 33_480_577),
+    (14, 21_621_838, 22_552_154),
+    (14, 105_583_731, 106_879_812),
+    (2, 88_857_161, 90_315_836),
+    (22, 22_026_076, 22_923_034),
+    (7, 38_239_580, 38_368_169),
+    (7, 142_299_177, 142_813_399),
+];
+
+/// [`EXCLUDE_HG38`] on GRCh37. MHC is numbat's interval moved by the
+/// constant 32,223 bp offset of its boundary genes (GPX6, GPX5, HLA-A,
+/// HLA-DPB1); the IG/TR loci are from GENCODE v19.
+pub const EXCLUDE_HG19: [(u32, u64, u64); 7] = [
+    (6, 28_477_897, 33_448_354),
+    (14, 22_089_991, 23_021_097),
+    (14, 106_053_226, 107_288_019),
+    (2, 89_156_674, 90_274_235),
+    (22, 22_380_474, 23_265_203),
+    (7, 38_279_181, 38_407_770),
+    (7, 141_999_017, 142_511_084),
+];
+
 ///////////////
 // CsrCounts //
 ///////////////

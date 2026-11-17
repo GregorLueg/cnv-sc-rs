@@ -158,7 +158,7 @@ fn cap_simd_level(detected: SimdLevel) -> SimdLevel {
 /// `dh_i = x v_i - e^m expm1(v_i) - v_i (v_i + 2c) / (2 sigma^2)` and
 /// `terms_i = w_i exp(dh_i)`, as in `pln_quadrature` (SPEC 4.1). `exp` and
 /// `expm1` are range-reduced Taylor series without special cases (see
-/// [`exp_parts_128`]); within about 1 ulp of libm.
+/// `exp_parts_128`); within about 1 ulp of libm.
 ///
 /// ### Params
 ///
