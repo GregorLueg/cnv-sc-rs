@@ -100,8 +100,15 @@ on aarch64, ns per call:
 Why the middle rows lose: `wide`'s `exp` pays for NaN, overflow and
 subnormal handling per call; `f64x2::round` has no NEON path (scalar `as u64`
 through an array); `f64x4::splat` inside the loop compiled to a
-`memset_pattern16` call per constant and iteration. x86-64 is not measured;
-without target features `f64x4` is SSE2 pairs.
+`memset_pattern16` call per constant and iteration.
+
+x86-64 dispatches at runtime (`utils::simd::detect_simd_level`, lowered by
+`CNV_SC_SIMD=sse|avx2|avx512`): AVX-512F, AVX2 with FMA, or the `wide` path
+as SSE2 pairs. No native x86 timings yet. Under Rosetta (M1 Max,
+`ROSETTA_ADVERTISE_AVX=1` to expose AVX2) the SSE2 and AVX2 kernels pass the
+test suite and give f32 TNBC1 posteriors bit-identical to aarch64; Rosetta
+timings (SSE2 750, AVX2 2516 ns per `ln_pln`) are translation cost, not a
+measurement. AVX-512 is compiled but has not run: Rosetta has no AVX-512.
 
 ### Reading cells in blocks (`CellBlocks`)
 

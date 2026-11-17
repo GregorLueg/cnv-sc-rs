@@ -7,6 +7,7 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use cnv_sc_rs::model::pln::{fit_lnpois, l_lnpois_multi, ln_pln, ln_pln_fused};
+use cnv_sc_rs::utils::simd::detect_simd_level;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand_distr::{Distribution, Normal, Poisson};
@@ -42,7 +43,10 @@ fn main() {
         mu.push(m);
     }
     let zero_frac = x.iter().filter(|&&v| v == 0).count() as f64 / N as f64;
-    println!("{N} pairs, zero fraction {zero_frac:.3}, sigma {SIGMA}");
+    println!(
+        "{N} pairs, zero fraction {zero_frac:.3}, sigma {SIGMA}, SIMD {:?}",
+        detect_simd_level()
+    );
 
     let ns = time_ns(
         || (0..N).map(|i| ln_pln(black_box(x[i]), mu[i], SIGMA)).sum(),
