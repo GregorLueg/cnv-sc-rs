@@ -663,13 +663,72 @@ impl CountGroups {
 // FusedInterp //
 /////////////////
 
+/// Number of [`CHEB_WIDTH`] panels covering a `t` range.
+///
+/// ### Params
+///
+/// * `width` - `t_hi - t_lo`, `>= 0`
+///
+/// ### Returns
+///
+/// Panel count, `>= 1`.
+#[inline]
+fn n_panels(width: f64) -> usize {
+    (width / CHEB_WIDTH).floor() as usize + 1
+}
+
+/// Chebyshev coefficients of [`ln_pln_fused`] on one panel.
+///
+/// ### Params
+///
+/// * `x` - Count
+/// * `sigma` - Standard deviation of the latent log-rate
+/// * `centre` - Panel centre in `t`
+///
+/// ### Returns
+///
+/// `[degree][form]`, so the panel's value at `u` in `[-1, 1]` is
+/// `sum_k c_k T_k(u)`.
+fn panel_coefs(x: u32, sigma: f64, centre: f64) -> [[f64; N_FORMS]; CHEB_DEGREE + 1] {
+    let n = CHEB_DEGREE;
+    let mut vals = [[0.0; N_FORMS]; CHEB_DEGREE + 1];
+    for (j, v) in vals.iter_mut().enumerate() {
+        let u = (PI * j as f64 / n as f64).cos();
+        let d = ln_pln_fused(x, centre + 0.5 * CHEB_WIDTH * u, sigma);
+        *v = [
+            d.ln_p,
+            d.d_mu,
+            d.d_sigma,
+            d.d2_mu,
+            d.d2_mu_sigma,
+            d.d2_sigma,
+        ];
+    }
+    // c_k = (2 / n) sum'' f_j cos(pi j k / n), ends halved
+    let mut c = [[0.0; N_FORMS]; CHEB_DEGREE + 1];
+    for (k, ck) in c.iter_mut().enumerate() {
+        for (j, v) in vals.iter().enumerate() {
+            let w = if j == 0 || j == n { 0.5 } else { 1.0 };
+            let cs = w * (PI * (j * k) as f64 / n as f64).cos();
+            for f in 0..N_FORMS {
+                ck[f] += cs * v[f];
+            }
+        }
+        let w = if k == 0 || k == n { 1.0 } else { 2.0 };
+        for f in 0..N_FORMS {
+            ck[f] *= w / n as f64;
+        }
+    }
+    c
+}
+
 /// Piecewise Chebyshev interpolant of [`ln_pln_fused`] in `t` at fixed count
 /// and `sigma`.
 struct FusedInterp {
     /// Left end of the first panel
     t_lo: f64,
     /// Coefficients, `[panel][degree][form]`
-    coef: Vec<[f64; N_FORMS]>,
+    coef: Vec<[[f64; N_FORMS]; CHEB_DEGREE + 1]>,
 }
 
 impl FusedInterp {
@@ -686,40 +745,9 @@ impl FusedInterp {
     ///
     /// The interpolant.
     fn new(x: u32, sigma: f64, t_lo: f64, t_hi: f64) -> Self {
-        let n_panels = (((t_hi - t_lo) / CHEB_WIDTH).floor() as usize) + 1;
-        let n = CHEB_DEGREE;
-        let mut coef = vec![[0.0; N_FORMS]; n_panels * (n + 1)];
-        let mut vals = vec![[0.0; N_FORMS]; n + 1];
-        for p in 0..n_panels {
-            let centre = t_lo + (p as f64 + 0.5) * CHEB_WIDTH;
-            for (j, v) in vals.iter_mut().enumerate() {
-                let u = (PI * j as f64 / n as f64).cos();
-                let d = ln_pln_fused(x, centre + 0.5 * CHEB_WIDTH * u, sigma);
-                *v = [
-                    d.ln_p,
-                    d.d_mu,
-                    d.d_sigma,
-                    d.d2_mu,
-                    d.d2_mu_sigma,
-                    d.d2_sigma,
-                ];
-            }
-            // c_k = (2 / n) sum'' f_j cos(pi j k / n), ends halved
-            let c = &mut coef[p * (n + 1)..(p + 1) * (n + 1)];
-            for (k, ck) in c.iter_mut().enumerate() {
-                for (j, v) in vals.iter().enumerate() {
-                    let w = if j == 0 || j == n { 0.5 } else { 1.0 };
-                    let cs = w * (PI * (j * k) as f64 / n as f64).cos();
-                    for f in 0..N_FORMS {
-                        ck[f] += cs * v[f];
-                    }
-                }
-                let w = if k == 0 || k == n { 1.0 } else { 2.0 };
-                for f in 0..N_FORMS {
-                    ck[f] *= w / n as f64;
-                }
-            }
-        }
+        let coef = (0..n_panels(t_hi - t_lo))
+            .map(|p| panel_coefs(x, sigma, t_lo + (p as f64 + 0.5) * CHEB_WIDTH))
+            .collect();
         Self { t_lo, coef }
     }
 
@@ -731,11 +759,10 @@ impl FusedInterp {
     /// * `acc` - Accumulator, in [`PlnDerivs`] field order
     #[inline]
     fn add_to(&self, t: f64, acc: &mut [f64; N_FORMS]) {
-        let n = CHEB_DEGREE;
         let r = (t - self.t_lo) / CHEB_WIDTH;
-        let p = (r as usize).min(self.coef.len() / (n + 1) - 1);
+        let p = (r as usize).min(self.coef.len() - 1);
         let u = 2.0 * (r - p as f64) - 1.0;
-        let c = &self.coef[p * (n + 1)..(p + 1) * (n + 1)];
+        let c = &self.coef[p];
         let (mut b1, mut b2) = ([0.0; N_FORMS], [0.0; N_FORMS]);
         for ck in c[1..].iter().rev() {
             for f in 0..N_FORMS {
@@ -746,6 +773,85 @@ impl FusedInterp {
         }
         for f in 0..N_FORMS {
             acc[f] += c[0][f] + u * b1[f] - b2[f];
+        }
+    }
+}
+
+/////////////////
+// ChebMoments //
+/////////////////
+
+/// Chebyshev moments of one interpolated group in [`fit_lnpois`].
+///
+/// The fit builds its interpolant over `[mu + lo, mu + hi]` and evaluates it
+/// at `mu + off_g`, so each gene's panel and local coordinate `u_g` do not
+/// depend on `(mu, sigma)`. By linearity the group sum is
+/// `sum_p sum_k c_pk M_pk` with `M_pk = sum_{g in p} T_k(u_g)`, computed once
+/// per fit instead of a Clenshaw pass per gene and evaluation. Panels without
+/// genes are never built.
+struct ChebMoments {
+    /// Count of the group
+    x: u32,
+    /// Smallest offset in the group
+    lo: f64,
+    /// `M_pk`, `[panel][degree]`
+    m: Vec<[f64; CHEB_DEGREE + 1]>,
+    /// Genes per panel
+    size: Vec<usize>,
+}
+
+impl ChebMoments {
+    /// Moments of one group.
+    ///
+    /// ### Params
+    ///
+    /// * `x` - Count
+    /// * `offs` - Offsets of the group, non-empty
+    ///
+    /// ### Returns
+    ///
+    /// The moments.
+    fn new(x: u32, offs: &[f64]) -> Self {
+        let (lo, hi) = min_max(offs);
+        let np = n_panels(hi - lo);
+        let mut m = vec![[0.0; CHEB_DEGREE + 1]; np];
+        let mut size = vec![0; np];
+        for &o in offs {
+            let r = (o - lo) / CHEB_WIDTH;
+            let p = (r as usize).min(np - 1);
+            let u = 2.0 * (r - p as f64) - 1.0;
+            let mp = &mut m[p];
+            let (mut t0, mut t1) = (1.0, u);
+            mp[0] += t0;
+            mp[1] += t1;
+            for mk in mp[2..].iter_mut() {
+                let t2 = 2.0 * u * t1 - t0;
+                *mk += t2;
+                (t0, t1) = (t1, t2);
+            }
+            size[p] += 1;
+        }
+        Self { x, lo, m, size }
+    }
+
+    /// Add the group's summed terms at `(mu, sigma)` to an accumulator.
+    ///
+    /// ### Params
+    ///
+    /// * `mu` - Mean of the latent log-rate
+    /// * `sigma` - Standard deviation of the latent log-rate
+    /// * `acc` - Accumulator, in [`PlnDerivs`] field order
+    fn add_to(&self, mu: f64, sigma: f64, acc: &mut [f64; N_FORMS]) {
+        for (p, mp) in self.m.iter().enumerate() {
+            if self.size[p] == 0 {
+                continue;
+            }
+            let c = panel_coefs(self.x, sigma, mu + self.lo + (p as f64 + 0.5) * CHEB_WIDTH);
+            for (ck, &mk) in c.iter().zip(mp) {
+                for f in 0..N_FORMS {
+                    acc[f] += ck[f] * mk;
+                }
+            }
         }
     }
 }
@@ -766,35 +872,32 @@ fn min_max(v: &[f64]) -> (f64, f64) {
         })
 }
 
-/// [`sum_fused`] over [`CountGroups`]: interpolated groups plus the sweep.
+/// [`sum_fused`] over the split genes: interpolated groups plus the sweep.
 ///
 /// ### Params
 ///
-/// * `g` - The split genes
+/// * `g` - The split genes; only its sweep is read
+/// * `tabs` - Moments of the interpolated groups of `g`
 /// * `mu` - Mean of the latent log-rate
 /// * `sigma` - Standard deviation of the latent log-rate
 ///
 /// ### Returns
 ///
 /// Summed loglikelihood, gradient and Hessian.
-fn sum_grouped(g: &CountGroups, mu: f64, sigma: f64) -> PlnDerivs {
+fn sum_grouped(g: &CountGroups, tabs: &[ChebMoments], mu: f64, sigma: f64) -> PlnDerivs {
     let mut acc = sum_fused(&g.y, &g.off, mu, sigma);
-    for (x, offs) in &g.tabled {
-        let (lo, hi) = min_max(offs);
-        let it = FusedInterp::new(*x, sigma, mu + lo, mu + hi);
-        let mut s = [0.0; N_FORMS];
-        for &o in offs {
-            it.add_to(mu + o, &mut s);
-        }
-        acc.add(&PlnDerivs {
-            ln_p: s[0],
-            d_mu: s[1],
-            d_sigma: s[2],
-            d2_mu: s[3],
-            d2_mu_sigma: s[4],
-            d2_sigma: s[5],
-        });
+    let mut s = [0.0; N_FORMS];
+    for t in tabs {
+        t.add_to(mu, sigma, &mut s);
     }
+    acc.add(&PlnDerivs {
+        ln_p: s[0],
+        d_mu: s[1],
+        d_sigma: s[2],
+        d2_mu: s[3],
+        d2_mu_sigma: s[4],
+        d2_sigma: s[5],
+    });
     acc
 }
 
@@ -875,7 +978,12 @@ pub fn fit_lnpois<T: CnvFloat>(y: &[u32], lambda: &[T], d: f64) -> Result<Lnpois
     let off = offsets(y, lambda, d, None)?;
     let (mut mu, mut sigma) = moment_start(y, &off);
     let groups = CountGroups::new(y, &off, 1, 0.0);
-    let mut cur = sum_grouped(&groups, mu, sigma);
+    let tabs: Vec<ChebMoments> = groups
+        .tabled
+        .iter()
+        .map(|(x, offs)| ChebMoments::new(*x, offs))
+        .collect();
+    let mut cur = sum_grouped(&groups, &tabs, mu, sigma);
     for iter in 0..FIT_MAX_ITER {
         let (g1, g2) = (cur.d_mu, cur.d_sigma);
         let (h11, h12, h22) = (cur.d2_mu, cur.d2_mu_sigma, cur.d2_sigma);
@@ -908,7 +1016,7 @@ pub fn fit_lnpois<T: CnvFloat>(y: &[u32], lambda: &[T], d: f64) -> Result<Lnpois
         let mut accepted = false;
         for _ in 0..FIT_MAX_HALVINGS {
             let (mu_n, sig_n) = (mu + t * d1, (sigma + t * d2).max(SIGMA_MIN));
-            let next = sum_grouped(&groups, mu_n, sig_n);
+            let next = sum_grouped(&groups, &tabs, mu_n, sig_n);
             if next.ln_p > cur.ln_p {
                 (mu, sigma, cur) = (mu_n, sig_n, next);
                 accepted = true;

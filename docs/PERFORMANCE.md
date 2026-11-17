@@ -55,6 +55,35 @@ At 20k our per-stage seconds: smoothing 0.06, clustering 1.06, bulk HMMs
 0.21, consensus 0.11, cell posteriors 6.12; peak heap above the 349 MB input
 103 MB. Tumour/normal accuracy 0.966 (10k) and 0.965 (20k).
 
+### GSE148673 (`examples/gse148673.rs`)
+
+Gao et al. (CopyKat) UMI matrices; copykat `N` cells as the reference.
+TNBC1: 1,097 cells, 19,755 autosomal expressed genes (GENCODE v19), 20.6%
+nonzero. ATC2: 6,226 cells, 22,400 genes (Ensembl 93), 9.1% nonzero. 10
+threads, 2026-11-17.
+
+| data | baseline total | baseline posteriors | + Chebyshev moments total | posteriors |
+|---|---|---|---|---|
+| TNBC1 | 1.63 s | 1.40 s | 1.41 s | 1.00 s |
+| ATC2 | 5.42 s | 4.47 s | 3.16 s | 2.25 s |
+| simulation 10k | 3.87 s | 3.08 s | 2.80 s | 2.00 s |
+| simulation 50k | 18.80 s | 15.28 s | 13.59 s | 10.06 s |
+
+Posterior stage profile at baseline, one thread, macOS `sample`, share of
+the stage:
+
+| | TNBC1 | ATC2 |
+|---|---|---|
+| `sum_grouped` own time (per-gene Clenshaw) | 19% | 50% |
+| `ln_pln_fused`, all callers | 56% | 38% |
+| of which libm `exp` + `expm1` | 36% | 25% |
+| `FusedInterp::new` (table build) | 33% | 22% |
+
+Chebyshev moments (`ChebMoments`): per-panel sums of `T_k(u_g)` once per
+fit instead of a Clenshaw pass per gene and evaluation, and no table for an
+empty panel. f32 posteriors bit-identical on TNBC1; on ATC2 2 of 74,712
+log-odds differ, by at most 1.5e-8.
+
 ### Reading cells in blocks (`CellBlocks`)
 
 50k cells x 10k genes, 10 threads, `BLOCK_CELLS` = 8192. In memory (no
