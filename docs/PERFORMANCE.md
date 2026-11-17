@@ -110,6 +110,10 @@ test suite and give f32 TNBC1 posteriors bit-identical to aarch64; Rosetta
 timings (SSE2 750, AVX2 2516 ns per `ln_pln`) are translation cost, not a
 measurement. AVX-512 is compiled but has not run: Rosetta has no AVX-512.
 
+bonsai-rs 0.3.3 (`merge_adjacency` no longer re-sorts every neighbour list
+per merge) on top of the SIMD row, simulation, 10 threads: 10k total 1.98 s,
+clustering 0.27 s; 50k total 9.53 s, clustering 1.67 s (3.1 s on 0.3.1).
+
 ### Reading cells in blocks (`CellBlocks`)
 
 50k cells x 10k genes, 10 threads, `BLOCK_CELLS` = 8192. In memory (no
