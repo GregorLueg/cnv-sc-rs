@@ -13,6 +13,7 @@ use std::sync::OnceLock;
 
 use crate::errors::CnvErrors;
 use crate::utils::optim::maximise_concave_1d;
+use crate::utils::simd::pln_node_masses;
 use crate::utils::traits::{CnvFloat, wide};
 
 ////////////
@@ -234,14 +235,8 @@ fn pln_quadrature(
     let s = 1.0 / (em + inv_var).sqrt();
     let c = m - mu;
     let half_iv = 0.5 * inv_var;
-    let mut sum = 0.0;
-    for i in 0..GH_NODES {
-        let v = s * gh.z[i];
-        // h(m + v) - h(m), written to avoid cancellation
-        let dh = xf * v - em * v.exp_m1() - v * (v + 2.0 * c) * half_iv;
-        terms[i] = gh.w[i] * dh.exp();
-        sum += terms[i];
-    }
+    // h(m + v) - h(m) per node, written to avoid cancellation
+    let sum = pln_node_masses(xf, em, s, c, half_iv, &gh.z, &gh.w, terms);
     let hm = xf * m - em - c * c * half_iv;
     let ln_p = hm - ln_factorial(x) - sigma.ln() - 0.5 * (2.0 * PI).ln() + s.ln() + sum.ln();
     (ln_p, sum, s, c)

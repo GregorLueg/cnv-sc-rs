@@ -62,12 +62,12 @@ TNBC1: 1,097 cells, 19,755 autosomal expressed genes (GENCODE v19), 20.6%
 nonzero. ATC2: 6,226 cells, 22,400 genes (Ensembl 93), 9.1% nonzero. 10
 threads, 2026-11-17.
 
-| data | baseline total | baseline posteriors | + Chebyshev moments total | posteriors |
-|---|---|---|---|---|
-| TNBC1 | 1.63 s | 1.40 s | 1.41 s | 1.00 s |
-| ATC2 | 5.42 s | 4.47 s | 3.16 s | 2.25 s |
-| simulation 10k | 3.87 s | 3.08 s | 2.80 s | 2.00 s |
-| simulation 50k | 18.80 s | 15.28 s | 13.59 s | 10.06 s |
+| data | baseline total | posteriors | + Chebyshev moments total | posteriors | + SIMD node masses total | posteriors |
+|---|---|---|---|---|---|---|
+| TNBC1 | 1.63 s | 1.40 s | 1.41 s | 1.00 s | 0.99 s | 0.70 s |
+| ATC2 | 5.42 s | 4.47 s | 3.16 s | 2.25 s | 2.46 s | 1.71 s |
+| simulation 10k | 3.87 s | 3.08 s | 2.80 s | 2.00 s | 2.20 s | 1.49 s |
+| simulation 50k | 18.80 s | 15.28 s | 13.59 s | 10.06 s | 11.62 s | 7.96 s |
 
 Posterior stage profile at baseline, one thread, macOS `sample`, share of
 the stage:
@@ -83,6 +83,25 @@ Chebyshev moments (`ChebMoments`): per-panel sums of `T_k(u_g)` once per
 fit instead of a Clenshaw pass per gene and evaluation, and no table for an
 empty panel. f32 posteriors bit-identical on TNBC1; on ATC2 2 of 74,712
 log-odds differ, by at most 1.5e-8.
+
+SIMD node masses (`utils::simd::pln_node_masses`): the 56-node loop of
+`pln_quadrature` in `f64x4` with an in-house `exp`/`expm1` (range
+reduction, degree-13 Taylor, no special cases; within 2.5e-16 relative of
+libm). f32 posteriors unchanged against the moments-only run. `benches/pln.rs`
+on aarch64, ns per call:
+
+| | `ln_pln` | `ln_pln_fused` |
+|---|---|---|
+| scalar libm | 547 | 626 |
+| `wide` `exp` / `exp_m1` | 1000 | 1075 |
+| in-house, `round` + `splat` in the loop | 813 to 977 | 885 to 1065 |
+| in-house, `const` vectors, shift-constant rounding | 344 | 434 |
+
+Why the middle rows lose: `wide`'s `exp` pays for NaN, overflow and
+subnormal handling per call; `f64x2::round` has no NEON path (scalar `as u64`
+through an array); `f64x4::splat` inside the loop compiled to a
+`memset_pattern16` call per constant and iteration. x86-64 is not measured;
+without target features `f64x4` is SSE2 pairs.
 
 ### Reading cells in blocks (`CellBlocks`)
 

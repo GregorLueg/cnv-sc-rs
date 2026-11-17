@@ -3,4 +3,5 @@
 
 pub mod lse;
 pub mod optim;
+pub mod simd;
 pub mod traits;
