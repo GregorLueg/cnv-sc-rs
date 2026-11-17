@@ -9,6 +9,10 @@ use crate::errors::CnvErrors;
 use crate::genome::{CsrCounts, GenomeOrder};
 use crate::utils::traits::{CnvFloat, wide};
 
+////////////
+// Consts //
+////////////
+
 /// Scale from proportions to counts per million, as numbat writes `* 1e6`.
 const CPM: f64 = 1e6;
 
@@ -35,10 +39,13 @@ const FIT_REL_TOL: f64 = 1e-15;
 /// rejected one, give up beyond `LM_MU_MAX` times the diagonal. Textbook
 /// values, ours.
 const LM_MU_INIT: f64 = 1e-3;
+
 /// See [`LM_MU_INIT`].
 const LM_SHRINK: f64 = 0.3;
+
 /// See [`LM_MU_INIT`].
 const LM_GROW: f64 = 10.0;
+
 /// See [`LM_MU_INIT`].
 const LM_MU_MAX: f64 = 1e20;
 

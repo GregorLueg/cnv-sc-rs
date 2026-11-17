@@ -12,6 +12,10 @@ use crate::errors::CnvErrors;
 use crate::genome::{CsrCounts, GenomeOrder};
 use crate::utils::traits::{CnvFloat, narrow};
 
+////////////
+// Consts //
+////////////
+
 /// Scale from proportions to counts per million (N/R/utils.R:113).
 const CPM: f64 = 1e6;
 

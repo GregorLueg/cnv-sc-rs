@@ -15,26 +15,32 @@ use crate::model::pln::{LnpoisFit, approx_phi_post, fit_lnpois, l_lnpois_multi};
 use crate::utils::lse::{log_sum_exp, log1mexp};
 use crate::utils::traits::{CnvFloat, wide};
 
-///////////////
-// Constants //
-///////////////
+////////////
+// Consts //
+////////////
 
 /// Lower end of the deletion `phi` range in the retest (N/R/utils.R:757).
 const PHI_RANGE_LO: f64 = 0.1;
+
 /// Upper end of the gain `phi` range in the retest (N/R/utils.R:758).
 const PHI_RANGE_HI: f64 = 3.0;
 
 /// Retest prior on `neu`, `G['11']` (N/R/utils.R:702).
 const PRIOR_NEU: f64 = 0.5;
+
 /// Retest prior on `loh`, `G['20']` (N/R/utils.R:702).
 const PRIOR_LOH: f64 = 0.1;
+
 /// Retest prior on `del`, `G['10']` (N/R/utils.R:702).
 const PRIOR_DEL: f64 = 0.1;
+
 /// Retest prior on each of the two gains, `G['21']` and `G['31']`
 /// (N/R/utils.R:702).
 const PRIOR_AMP_EACH: f64 = 0.05;
+
 /// Retest prior on `bamp`, `G['22']` (N/R/utils.R:702).
 const PRIOR_BAMP: f64 = 0.1;
+
 /// Retest prior on `bdel`, `G['00']` (N/R/utils.R:702).
 const PRIOR_BDEL: f64 = 0.1;
 

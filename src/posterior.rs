@@ -17,23 +17,38 @@ use crate::reference::Profiles;
 use crate::segments::{PostState, Segment};
 use crate::utils::lse::log_sum_exp;
 
-/// Segment state priors below this are set to 0 (N/R/main.R:1400-1403).
-const PRIOR_FLOOR: f64 = 0.05;
-
-/// The `phi` values of SPEC 8.4, in the order `l11, l10, l21, l31, l00`.
-const POST_PHIS: [f64; 5] = [1.0, 0.5, 1.5, 2.0, 0.25];
+////////////
+// Consts //
+////////////
 
 /// Log-odds stored per cell and segment.
 pub const N_LOG_ODDS: usize = 4;
 
 /// Column of the pooled `logBF` in [`CellPosteriors::log_odds`].
 pub const COL_LOGBF: usize = 0;
+
 /// Column of `Z_loh - Z_n`.
 pub const COL_LOH: usize = 1;
+
 /// Column of `Z_del - Z_n`.
 pub const COL_DEL: usize = 2;
+
 /// Column of `Z_amp - Z_n`.
 pub const COL_AMP: usize = 3;
+
+/// Fraction of consensus genes in `neu` segments below which the per-cell
+/// baseline also takes `loh` segments (N/R/main.R:1336).
+pub const POST_USE_LOH_NEU_FRAC: f64 = 0.05;
+
+/// Segment state priors below this are set to 0 (N/R/main.R:1400-1403).
+const PRIOR_FLOOR: f64 = 0.05;
+
+/// The `phi` values of SPEC 8.4, in the order `l11, l10, l21, l31, l00`.
+const POST_PHIS: [f64; 5] = [1.0, 0.5, 1.5, 2.0, 0.25];
+
+////////////////////
+// CellPosteriors //
+////////////////////
 
 /// Per-cell posteriors over the non-neutral consensus segments.
 #[derive(Clone, Debug)]
@@ -124,6 +139,10 @@ pub fn effective_state(s: &Segment) -> PostState {
     s.retest.map_or(PostState::Neu, |r| r.state_post)
 }
 
+//////////////
+// RefGenes //
+//////////////
+
 /// Genes per segment column and baseline genes, for one reference profile.
 struct RefGenes {
     /// Genomic gene indices of the baseline (neutral) genes with `lambda > 0`
@@ -145,10 +164,6 @@ struct Scratch {
     /// Gathered counts of one gene set
     ys: Vec<u32>,
 }
-
-/// Fraction of consensus genes in `neu` segments below which the per-cell
-/// baseline also takes `loh` segments (N/R/main.R:1336).
-pub const POST_USE_LOH_NEU_FRAC: f64 = 0.05;
 
 /// Whether the per-cell baseline includes `loh` segments (SPEC 8.3).
 ///

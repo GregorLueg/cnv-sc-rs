@@ -548,9 +548,13 @@ fn sum_fused(y: &[u32], off: &[f64], mu: f64, sigma: f64) -> PlnDerivs {
     acc
 }
 
-//////////////////////
+////////////////////////
 // Count interpolants //
-//////////////////////
+////////////////////////
+
+////////////
+// Consts //
+////////////
 
 /// Largest count whose genes are summed through an interpolant in
 /// [`CountGroups`]. Counts above it are swept with [`ln_pln_fused`]. Three is
@@ -571,6 +575,10 @@ const CHEB_WIDTH: f64 = 2.0;
 
 /// Fused terms per node: `ln p` and the five derivatives of [`PlnDerivs`].
 const N_FORMS: usize = 6;
+
+/////////////////
+// CountGroups //
+/////////////////
 
 /// Genes of one fit split by count, for [`sum_grouped`].
 ///
@@ -650,6 +658,10 @@ impl CountGroups {
         }
     }
 }
+
+/////////////////
+// FusedInterp //
+/////////////////
 
 /// Piecewise Chebyshev interpolant of [`ln_pln_fused`] in `t` at fixed count
 /// and `sigma`.
