@@ -1,0 +1,6 @@
+CHROM	seg_cons	cnv_state	cnv_state_post	p_amp	p_del	p_bdel	p_loh	p_bamp
+1	1a	neu	neu	NA	NA	NA	NA	NA
+1	1b	amp_1	amp	0.8	0.1	0.05	0.03	0.02
+2	2a	del_1	del	0.1	0.85	0.02	0.02	0.01
+3	3a	neu	neu	NA	NA	NA	NA	NA
+3	3b	amp_1	amp	0.7	0.2	0.04	0.03	0.03
