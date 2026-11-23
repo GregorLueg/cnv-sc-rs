@@ -1,0 +1,67 @@
+site_name: cnv-sc-rs
+site_description: Copy number inference from single cell expression, in Rust.
+site_url: https://gregorlueg.github.io/cnv-sc-rs/
+repo_url: https://github.com/GregorLueg/cnv-sc-rs
+repo_name: GregorLueg/cnv-sc-rs
+edit_uri: edit/main/python/docs/
+copyright: MIT licensed
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - With scanpy: scanpy.md
+  - API reference: api.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          # `cnv_sc_rs` sits next to mkdocs.yml, not under `docs/`.
+          paths: ["."]
+          options:
+            docstring_style: google
+            docstring_section_style: table
+            separate_signature: true
+            show_signature_annotations: true
+            members_order: source
+            show_root_heading: true
+            show_root_full_path: false
+            show_source: false
+            heading_level: 2
+            filters: ["!^_"]
+
+watch:
+  - cnv_sc_rs

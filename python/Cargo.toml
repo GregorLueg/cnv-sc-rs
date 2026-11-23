@@ -1,0 +1,36 @@
+[package]
+# Versioned independently of `cnv-sc-rs`: a docstring fix here should not force
+# a crates.io release. The wheel reports the vendored core version as
+# `__core_version__`.
+name = "cnv-sc-py"
+version = "0.1.0"
+edition = "2024"
+authors = ["Gregor Lueg <gregorlueg@me.com>"]
+license = "MIT"
+description = "Python bindings for cnv-sc-rs"
+publish = false
+
+# Own workspace root, so cargo does not walk up into the core crate.
+[workspace]
+
+[lib]
+name = "_cnv_sc_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+cnv-sc-rs = { path = ".." }
+numpy = "0.29"
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py310"] }
+rayon = "1.11"
+
+# Profiles are only read from the workspace root, so the core's do not reach
+# here.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+# Must stay unwind: pyo3 catches panics at the FFI boundary.
+panic = "unwind"
+
+# `maturin develop` builds dev by default; a debug-speed HMM is useless.
+[profile.dev]
+opt-level = 2

@@ -1,0 +1,6 @@
+seg_cons	n_states	cnv_states	p_amp	p_del	p_bdel	p_loh	p_bamp
+1a	0	neu	NA	NA	NA	NA	NA
+1b	2	amp,del	0.5	0.5	0	0	0
+2a	1	del	0.1	0.85	0.02	0.02	0.01
+3a	0	neu	NA	NA	NA	NA	NA
+3b	2	amp,loh	0.5	0	0	0.5	0
