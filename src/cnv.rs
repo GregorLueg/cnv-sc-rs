@@ -352,34 +352,32 @@ pub fn run_cnv<T: CnvFloat>(
     let allowed = order.allowed_mask(&params.exclude);
     let profiles = match *reference {
         Reference::Profiles { lambda, n_ref } => profiles_genomic(lambda, n_ref, &order)?,
-        Reference::Cells(list) => {
-            if list.is_empty() {
-                return Err(CnvErrors::EmptyInput {
-                    what: "reference cells",
-                });
-            }
-            if let Some(&c) = list.iter().find(|&&c| c as usize >= n_cells) {
-                return Err(CnvErrors::InvalidParameter {
-                    name: "cells",
-                    value: c.to_string(),
-                    expected: "cell indices below n_cells",
-                });
-            }
-            let mut list = list.to_vec();
-            list.sort_unstable();
-            let mut sums = vec![0u64; n_genes];
+        Reference::Cells(_) | Reference::Groups { .. } => {
+            let lists = reference
+                .cell_groups(n_cells)?
+                .expect("cell references have groups");
+            let mut sums = vec![vec![0u64; n_genes]; lists.len()];
             for (lo, hi) in blocks(n_cells, params.block_cells) {
-                let (_, rel) = in_block(&list, lo, hi);
-                if !rel.is_empty() {
-                    add_sums(
-                        &mut sums,
-                        &counts.with_block(lo, hi, |b| b.gene_sums(Some(&rel)))?,
-                    );
+                let rel: Vec<Vec<u32>> = lists.iter().map(|l| in_block(l, lo, hi).1).collect();
+                if rel.iter().all(|r| r.is_empty()) {
+                    continue;
                 }
+                counts.with_block(lo, hi, |b| {
+                    for (acc, r) in sums.iter_mut().zip(&rel) {
+                        if !r.is_empty() {
+                            add_sums(acc, &b.gene_sums(Some(r))?);
+                        }
+                    }
+                    Ok(())
+                })?;
+            }
+            let mut lambda = Vec::with_capacity(lists.len() * n_genes);
+            for s in &sums {
+                lambda.extend(profile_from_sums(&order.to_genomic(s)?)?);
             }
             Profiles {
-                n_ref: 1,
-                lambda: profile_from_sums(&order.to_genomic(&sums)?)?,
+                n_ref: lists.len(),
+                lambda,
             }
         }
     };
@@ -794,6 +792,7 @@ mod tests {
         let tot: f64 = second.iter().sum();
         second.iter_mut().for_each(|l| *l /= tot);
         let two: Vec<f64> = lambda.iter().chain(&second).copied().collect();
+        let parity: Vec<u32> = normal.iter().map(|&c| c % 2).collect();
         let refs = [
             Reference::Profiles {
                 lambda: &lambda,
@@ -804,6 +803,11 @@ mod tests {
                 n_ref: 2,
             },
             Reference::Cells(&normal),
+            Reference::Groups {
+                cells: &normal,
+                group: &parity,
+                n_ref: 2,
+            },
         ];
         let copied = Copying(counts);
         let params = |block_cells| {
@@ -862,6 +866,67 @@ mod tests {
                     blocked.clones.as_ref().unwrap().p_tumour
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_run_cnv_groups_match_cells_and_profiles() {
+        let (indptr, indices, data, chrom, start, end, _, truth) = simulate(7);
+        let counts = CsrCounts::new(&indptr, &indices, &data, chrom.len()).unwrap();
+        let normal: Vec<u32> = (0..truth.len() as u32)
+            .filter(|&c| truth[c as usize] == 0)
+            .collect();
+        let run = |reference: &Reference<'_, f64>| {
+            run_cnv(
+                &counts,
+                &chrom,
+                &start,
+                &end,
+                reference,
+                None,
+                Verbosity::Quiet,
+            )
+            .unwrap()
+        };
+        let same = |a: &CnvResult<f64>, b: &CnvResult<f64>| {
+            assert_eq!(a.refs, b.refs);
+            assert_eq!(a.cells, b.cells);
+            assert_eq!(a.bins.data, b.bins.data);
+            assert_eq!(
+                a.clones.as_ref().unwrap().p_tumour,
+                b.clones.as_ref().unwrap().p_tumour
+            );
+        };
+
+        // one label is the pooled reference
+        let zeros = vec![0u32; normal.len()];
+        let cells = run(&Reference::Cells(&normal));
+        let one = run(&Reference::Groups {
+            cells: &normal,
+            group: &zeros,
+            n_ref: 1,
+        });
+        same(&cells, &one);
+
+        // two labels equal the profiles pooled from the same cells
+        let parity: Vec<u32> = normal.iter().map(|&c| c % 2).collect();
+        let groups = run(&Reference::Groups {
+            cells: &normal,
+            group: &parity,
+            n_ref: 2,
+        });
+        let mut lambda = Vec::new();
+        for r in 0..2 {
+            let list: Vec<u32> = normal.iter().copied().filter(|&c| c % 2 == r).collect();
+            lambda.extend(profile_from_sums(&counts.gene_sums(Some(&list)).unwrap()).unwrap());
+        }
+        let profiles = run(&Reference::Profiles {
+            lambda: &lambda,
+            n_ref: 2,
+        });
+        same(&groups, &profiles);
+        for r in 0..2 {
+            assert!(groups.refs.contains(&Some(r)), "profile {r} unused");
         }
     }
 }

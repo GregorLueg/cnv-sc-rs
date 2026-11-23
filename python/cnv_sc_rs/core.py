@@ -14,7 +14,14 @@ from beartype import beartype
 from scipy import sparse
 
 from . import _cnv_sc_rs
-from ._validate import SparseMatrix, csr_counts, gene_mask, reference_cells
+from ._validate import (
+    SparseMatrix,
+    csr_counts,
+    gene_mask,
+    reference_cells,
+    reference_groups,
+    reference_profiles,
+)
 
 ###########
 # Globals #
@@ -103,6 +110,11 @@ class CnvResult:
         genotypes: Per genotype, its events as `(segment row, state)`;
             `state` is `None` unless the segment is multi-state. Genotype 0
             is the empty, normal one.
+        reference: Reference profile each cell correlates best with, an
+            index into `reference_names`, `-1` for dropped cells.
+        reference_names: Name per reference profile: the label with
+            `reference_labels`, otherwise its column index (`"0"` for pooled
+            reference cells).
         params: Parameters the run used.
         genome: Exclusion intervals the run used.
     """
@@ -120,6 +132,8 @@ class CnvResult:
     clone: np.ndarray
     clone_prob: np.ndarray
     genotypes: list[list[tuple[int, str | None]]]
+    reference: np.ndarray
+    reference_names: list[str]
     params: CnvParams
     genome: str
 
@@ -192,6 +206,7 @@ def infer_cnv(
     end: npt.ArrayLike,
     reference: npt.ArrayLike,
     *,
+    reference_labels: npt.ArrayLike | None = None,
     params: CnvParams | None = None,
     genome: Genome = "hg38",
     n_threads: int | None = None,
@@ -212,8 +227,14 @@ def infer_cnv(
         chrom: Chromosome per gene (`1`, `"1"` or `"chr1"`).
         start: Gene start in bp per gene.
         end: Gene end in bp per gene.
-        reference: Normal reference cells: a boolean mask over rows of `X` or
-            integer row indices.
+        reference: Normal reference cells as a boolean mask over rows of `X`
+            or integer row indices; or precomputed profiles, a float
+            `(n_genes, R)` array of proportions in the gene order of `X`.
+            Each cell is compared against the profile it correlates best
+            with. Profiles are subset to the kept genes, not renormalised.
+        reference_labels: Label per cell (length `n_cells`), read on the
+            reference cells only. Builds one profile per label instead of
+            pooling all reference cells into one. Not with profiles.
         params: Tuning parameters, `None` for the defaults.
         genome: Build of the default exclusion intervals (MHC and the IG/TR
             loci), or `"none"` to exclude nothing.
@@ -232,7 +253,18 @@ def infer_cnv(
     csr = sparse.csr_matrix(X)
     n_cells, n_genes = csr.shape
     keep, chrom_ids, s, e = gene_mask(chrom, start, end, n_genes)
-    ref = reference_cells(reference, n_cells)
+    ref_arr = np.asarray(reference)
+    if ref_arr.ndim == 2 and ref_arr.dtype.kind == "f":
+        if reference_labels is not None:
+            raise ValueError("reference_labels needs reference cells, not profiles")
+        refs = {"ref_profiles": reference_profiles(ref_arr, keep)}
+        names = [str(r) for r in range(ref_arr.shape[1])]
+    else:
+        ref = reference_cells(ref_arr, n_cells)
+        refs = {"ref_cells": ref}
+        names = ["0"]
+        if reference_labels is not None:
+            refs["ref_group"], names = reference_groups(reference_labels, ref, n_cells)
     if not keep.all():
         csr = csr[:, np.flatnonzero(keep)]
     indptr, indices, data = csr_counts(csr)
@@ -245,8 +277,8 @@ def infer_cnv(
         chrom_ids,
         s,
         e,
-        ref,
         {**dataclasses.asdict(params), "exclude": genome},
+        **refs,
         n_threads=n_threads,
         verbose=verbose,
     )
@@ -301,6 +333,8 @@ def infer_cnv(
         clone=clone,
         clone_prob=clone_prob,
         genotypes=genotypes,
+        reference=raw["refs"],
+        reference_names=names,
         params=params,
         genome=genome,
     )

@@ -41,6 +41,8 @@ proportions (columns sum to 1). `LSE` log-sum-exp. `ln` natural log.
 - `Cells`: indices of normal cells. Builds a 1-column profile:
   `lambda_g = sum_{c in ref} Y_gc / sum_{g,c in ref} Y_gc`
   (`aggregate_counts`, N/R/utils.R:62-95).
+- `Groups`: normal cells with a label each. One `Cells` profile per label,
+  giving genes x R as numbat's per-cell-type `lambdas_ref`.
 
 ### 2.2 `filter_genes` (N/R/utils.R:137-167)
 

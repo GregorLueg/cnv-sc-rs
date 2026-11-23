@@ -4,7 +4,14 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from cnv_sc_rs._validate import chromosome_ids, csr_counts, gene_mask, reference_cells
+from cnv_sc_rs._validate import (
+    chromosome_ids,
+    csr_counts,
+    gene_mask,
+    reference_cells,
+    reference_groups,
+    reference_profiles,
+)
 
 
 def test_chromosome_ids() -> None:
@@ -70,3 +77,37 @@ def test_reference_mask_and_indices() -> None:
 def test_reference_rejects(ref: object) -> None:
     with pytest.raises(ValueError):
         reference_cells(ref, 3)
+
+
+def test_reference_groups_sorted_labels() -> None:
+    group, names = reference_groups(["t", None, "m", "t"], np.array([0, 2, 3]), 4)
+    assert names == ["m", "t"]
+    np.testing.assert_array_equal(group, [1, 0, 1])
+    assert group.dtype == np.uint32
+
+
+@pytest.mark.parametrize("labels", [["t", None, "m"], ["t", np.nan, "m", "t"]])
+def test_reference_groups_rejects(labels: list) -> None:
+    with pytest.raises(ValueError):
+        reference_groups(labels, np.array([0, 1, 2]), 4)
+
+
+def test_reference_profiles_subsets_without_renormalising() -> None:
+    prof = np.array([[0.5, 0.2], [0.3, 0.3], [0.2, 0.5]])
+    out = reference_profiles(prof, np.array([True, False, True]))
+    np.testing.assert_allclose(out, [[0.5, 0.2], [0.2, 0.5]])
+    assert out.dtype == np.float32 and out.flags.c_contiguous
+
+
+@pytest.mark.parametrize(
+    "prof",
+    [
+        np.ones((2, 1)),
+        np.ones((3, 0)),
+        np.array([[-1.0], [1.0], [1.0]]),
+        np.array([[1.0, 0.0], [1.0, 1.0], [1.0, 0.0]]),
+    ],
+)
+def test_reference_profiles_rejects(prof: np.ndarray) -> None:
+    with pytest.raises(ValueError):
+        reference_profiles(prof, np.array([True, False, True]))

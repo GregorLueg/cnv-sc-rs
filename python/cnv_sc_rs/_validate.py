@@ -176,3 +176,63 @@ def reference_cells(reference: npt.ArrayLike, n_cells: int) -> np.ndarray:
     if r[0] < 0 or r[-1] >= n_cells:
         raise ValueError(f"reference indices must lie in [0, {n_cells})")
     return r.astype(np.uint32)
+
+
+@beartype
+def reference_groups(
+    labels: npt.ArrayLike, ref: np.ndarray, n_cells: int
+) -> tuple[np.ndarray, list[str]]:
+    """Profile index per reference cell from per-cell labels.
+
+    Args:
+        labels: Label per cell, length `n_cells`. Only reference cells are read.
+        ref: Reference row indices, as from `reference_cells`.
+        n_cells: Number of rows of the count matrix.
+
+    Returns:
+        `uint32` profile index per entry of `ref`, then the label of each
+        profile, sorted.
+
+    Raises:
+        ValueError: For labels of the wrong length or a missing label on a
+            reference cell.
+    """
+    lab = np.asarray(labels, dtype=object)
+    if lab.shape != (n_cells,):
+        raise ValueError(
+            f"reference_labels has shape {lab.shape}, expected ({n_cells},)"
+        )
+    sub = lab[ref]
+    if any(x is None or (isinstance(x, float) and np.isnan(x)) for x in sub):
+        raise ValueError("reference_labels is missing for some reference cells")
+    names, group = np.unique(sub.astype(str), return_inverse=True)
+    return group.astype(np.uint32), [str(n) for n in names]
+
+
+@beartype
+def reference_profiles(profiles: np.ndarray, keep: np.ndarray) -> np.ndarray:
+    """Precomputed profiles restricted to the kept genes, as the core reads them.
+
+    Rows are subset, not renormalised, as numbat subsets `lambdas_ref`.
+
+    Args:
+        profiles: Genes x profiles proportions over all genes of the matrix.
+        keep: Gene keep mask from `gene_mask`.
+
+    Returns:
+        `float32` profiles x kept genes, C-contiguous.
+
+    Raises:
+        ValueError: For the wrong number of rows, negative or non-finite
+            values, or a profile with nothing left on the kept genes.
+    """
+    if profiles.ndim != 2 or profiles.shape[0] != keep.size or profiles.shape[1] == 0:
+        raise ValueError(
+            f"reference profiles have shape {profiles.shape}, expected ({keep.size}, R)"
+        )
+    p = profiles[keep].astype(np.float64)
+    if not np.all(np.isfinite(p) & (p >= 0)):
+        raise ValueError("reference profiles must be finite and non-negative")
+    if np.any(p.sum(axis=0) == 0):
+        raise ValueError("a reference profile is zero on every kept gene")
+    return np.ascontiguousarray(p.T, dtype=np.float32)

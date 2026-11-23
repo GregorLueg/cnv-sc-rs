@@ -51,3 +51,33 @@ def test_missing_var_column(adata: anndata.AnnData) -> None:
 def test_reference_matches_nothing(adata: anndata.AnnData) -> None:
     with pytest.raises(ValueError, match="no cell"):
         cnv.infer_cnv_adata(adata, reference_key="cell_type", reference_cat="B cell")
+
+
+def test_reference_group_key(adata: anndata.AnnData, tmp_path: Path) -> None:
+    n = adata.n_obs
+    adata.obs["subtype"] = np.where(np.arange(n) % 2 == 0, "CD4", "CD8")
+    res = cnv.infer_cnv_adata(
+        adata,
+        reference_key="cell_type",
+        reference_cat="T cell",
+        reference_group_key="subtype",
+        layer="counts",
+        genome="none",
+    )
+    assert res.reference_names == ["CD4", "CD8"]
+    np.testing.assert_array_equal(adata.obs["cnv_reference"].to_numpy(), res.reference)
+    path = tmp_path / "a.h5ad"
+    adata.write_h5ad(path)
+    back = anndata.read_h5ad(path)
+    assert list(back.uns["cnv"]["reference_names"]) == ["CD4", "CD8"]
+
+
+def test_reference_group_key_missing_on_normal_cell(adata: anndata.AnnData) -> None:
+    adata.obs["subtype"] = None
+    with pytest.raises(ValueError, match="missing"):
+        cnv.infer_cnv_adata(
+            adata,
+            reference_key="cell_type",
+            reference_cat="T cell",
+            reference_group_key="subtype",
+        )

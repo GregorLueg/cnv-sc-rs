@@ -33,6 +33,7 @@ def _uns(res: CnvResult) -> dict:
         "chr_pos": {f"chr{chrom[i]}": int(i) for i in first},
         "bins": {c: bins[c].to_numpy() for c in bins.columns},
         "segments": {c: segs[c].to_numpy() for c in segs.columns},
+        "reference_names": np.array(res.reference_names, dtype=object),
         "params": dataclasses.asdict(res.params),
         "genome": res.genome,
     }
@@ -44,6 +45,7 @@ def infer_cnv_adata(
     *,
     reference_key: str,
     reference_cat: str | Sequence[str],
+    reference_group_key: str | None = None,
     layer: str | None = None,
     chrom_key: str = "chromosome",
     start_key: str = "start",
@@ -60,15 +62,19 @@ def infer_cnv_adata(
 
     - `obsm["X_cnv"]`: smoothed signal, cells x bins.
     - `obsm["cnv_p_cnv"]`: per-cell posterior of each non-neutral segment.
-    - `obs["cnv_p_tumour"]`, `obs["cnv_clone"]`, `obs["cnv_leaf"]`.
+    - `obs["cnv_p_tumour"]`, `obs["cnv_clone"]`, `obs["cnv_leaf"]`,
+      `obs["cnv_reference"]` (index into `reference_names`).
     - `uns["cnv"]`: `chr_pos` (first bin per chromosome), `bins`,
       `segments` (columns of `CnvResult.segments`; `multi_state` joined with
-      commas, nulls as `-1`), `params`, `genome`.
+      commas, nulls as `-1`), `reference_names`, `params`, `genome`.
 
     Args:
         adata: Cells x genes. Must hold raw counts in `layer` (or `X`).
         reference_key: `obs` column that labels the normal cells.
         reference_cat: Value(s) of `reference_key` that are normal.
+        reference_group_key: `obs` column that splits the normal cells into
+            one profile per value, e.g. the cell type. Can be
+            `reference_key` itself. `None` pools them into one profile.
         layer: Layer with raw counts, `None` for `adata.X`.
         chrom_key: `var` column with the chromosome per gene.
         start_key: `var` column with the gene start.
@@ -85,14 +91,16 @@ def infer_cnv_adata(
 
     Raises:
         KeyError: For a missing `obs`/`var` column or layer.
-        ValueError: For a reference that matches no cell.
+        ValueError: For a reference that matches no cell, or a normal cell
+            without a `reference_group_key` value.
     """
     X = sparse.csr_matrix(adata.X if layer is None else adata.layers[layer])
     for key in (chrom_key, start_key, end_key):
         if key not in adata.var:
             raise KeyError(f"adata.var has no column {key!r}; see the scanpy guide")
-    if reference_key not in adata.obs:
-        raise KeyError(f"adata.obs has no column {reference_key!r}")
+    for key in (reference_key, reference_group_key):
+        if key is not None and key not in adata.obs:
+            raise KeyError(f"adata.obs has no column {key!r}")
     cats = [reference_cat] if isinstance(reference_cat, str) else list(reference_cat)
     ref = adata.obs[reference_key].isin(cats).to_numpy()
     if not ref.any():
@@ -104,6 +112,9 @@ def infer_cnv_adata(
         adata.var[start_key].to_numpy(),
         adata.var[end_key].to_numpy(),
         ref,
+        reference_labels=None
+        if reference_group_key is None
+        else adata.obs[reference_group_key].to_numpy(),
         params=params,
         genome=genome,
         n_threads=n_threads,
@@ -114,5 +125,6 @@ def infer_cnv_adata(
     adata.obs[f"{key_added}_p_tumour"] = res.p_tumour
     adata.obs[f"{key_added}_clone"] = res.clone
     adata.obs[f"{key_added}_leaf"] = res.leaf
+    adata.obs[f"{key_added}_reference"] = res.reference
     adata.uns[key_added] = _uns(res)
     return res

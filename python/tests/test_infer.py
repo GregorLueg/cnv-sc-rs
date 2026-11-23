@@ -81,8 +81,27 @@ def test_unknown_param_rejected(sim: Sim) -> None:
             np.ones(1, np.uint32),
             np.zeros(1, np.uint64),
             np.ones(1, np.uint64),
-            np.zeros(1, np.uint32),
             {"windw": 3},
+            ref_cells=np.zeros(1, np.uint32),
+        )
+
+
+def test_run_cnv_needs_one_reference_form() -> None:
+    args = (
+        *(np.zeros(1, np.uint32),) * 3,
+        1,
+        np.ones(1, np.uint32),
+        np.zeros(1, np.uint64),
+        np.ones(1, np.uint64),
+        {},
+    )
+    with pytest.raises(ValueError, match="ref_cells"):
+        _cnv_sc_rs.run_cnv(*args)
+    with pytest.raises(ValueError, match="ref_cells"):
+        _cnv_sc_rs.run_cnv(
+            *args,
+            ref_cells=np.zeros(1, np.uint32),
+            ref_profiles=np.ones((1, 1), np.float32),
         )
 
 
@@ -96,4 +115,64 @@ def test_core_error_surfaces(sim: Sim) -> None:
             sim.reference,
             genome="none",
             params=cnv.CnvParams(min_cells=10_000),
+        )
+
+
+def test_pooled_reference_is_profile_zero(res: cnv.CnvResult) -> None:
+    assert res.reference_names == ["0"]
+    np.testing.assert_array_equal(res.reference, np.where(res.used, 0, -1))
+
+
+@pytest.fixture(scope="module")
+def labels(sim: Sim) -> np.ndarray:
+    lab = np.full(sim.X.shape[0], None, dtype=object)
+    lab[:N_REF] = np.where(np.arange(N_REF) % 2 == 0, "b", "a")
+    return lab
+
+
+@pytest.fixture(scope="module")
+def res_labels(sim: Sim, labels: np.ndarray) -> cnv.CnvResult:
+    return cnv.infer_cnv(
+        sim.X,
+        sim.chrom,
+        sim.start,
+        sim.end,
+        sim.reference,
+        reference_labels=labels,
+        genome="none",
+    )
+
+
+def test_reference_labels_build_one_profile_each(res_labels: cnv.CnvResult) -> None:
+    assert res_labels.reference_names == ["a", "b"]
+    assert set(res_labels.reference[res_labels.used]) == {0, 1}
+    calls = res_labels.segments.filter(res_labels.segments["confident"])
+    assert sorted(calls["chrom"]) == [2, 5]
+
+
+def test_reference_profiles_match_labels(
+    sim: Sim, labels: np.ndarray, res_labels: cnv.CnvResult
+) -> None:
+    sums = np.stack(
+        [np.asarray(sim.X[labels == k].sum(axis=0)).ravel() for k in ("a", "b")],
+        axis=1,
+    ).astype(np.float64)
+    res = cnv.infer_cnv(
+        sim.X, sim.chrom, sim.start, sim.end, sums / sums.sum(axis=0), genome="none"
+    )
+    assert res.reference_names == ["0", "1"]
+    np.testing.assert_array_equal(res.reference, res_labels.reference)
+    np.testing.assert_allclose(res.bins, res_labels.bins, atol=1e-4)
+
+
+def test_reference_labels_rejected_with_profiles(sim: Sim) -> None:
+    prof = np.ones((sim.X.shape[1], 1))
+    with pytest.raises(ValueError, match="reference_labels"):
+        cnv.infer_cnv(
+            sim.X,
+            sim.chrom,
+            sim.start,
+            sim.end,
+            prof,
+            reference_labels=np.zeros(sim.X.shape[0]),
         )

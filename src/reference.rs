@@ -66,6 +66,15 @@ pub enum Reference<'a, T: CnvFloat> {
     },
     /// Indices of normal cells, pooled into one profile
     Cells(&'a [u32]),
+    /// Labelled normal cells, pooled into one profile per label
+    Groups {
+        /// Indices of normal cells
+        cells: &'a [u32],
+        /// Profile index per entry of `cells`, below `n_ref`
+        group: &'a [u32],
+        /// Number of profiles
+        n_ref: usize,
+    },
 }
 
 /// Reference profiles in genomic order.
@@ -109,7 +118,8 @@ impl<T: CnvFloat> Reference<'_, T> {
     ///
     /// ### Params
     ///
-    /// * `counts` - Count matrix (used for [`Reference::Cells`])
+    /// * `counts` - Count matrix (used for [`Reference::Cells`] and
+    ///   [`Reference::Groups`])
     /// * `order` - Genomic order of the genes
     ///
     /// ### Returns
@@ -118,11 +128,94 @@ impl<T: CnvFloat> Reference<'_, T> {
     pub fn resolve(&self, counts: &CsrCounts, order: &GenomeOrder) -> Result<Profiles, CnvErrors> {
         match *self {
             Reference::Profiles { lambda, n_ref } => profiles_genomic(lambda, n_ref, order),
-            Reference::Cells(cells) => Ok(Profiles {
-                n_ref: 1,
-                lambda: aggregate(counts, order, cells)?,
-            }),
+            Reference::Cells(_) | Reference::Groups { .. } => {
+                let lists = self
+                    .cell_groups(counts.n_cells())?
+                    .expect("cell references have groups");
+                let mut lambda = Vec::with_capacity(lists.len() * order.n_genes());
+                for cells in &lists {
+                    lambda.extend(aggregate(counts, order, cells)?);
+                }
+                Ok(Profiles {
+                    n_ref: lists.len(),
+                    lambda,
+                })
+            }
         }
+    }
+
+    /// Reference cells split by profile, checked (SPEC 2.1).
+    ///
+    /// [`Reference::Cells`] is one group. Duplicate entries collapse into one.
+    ///
+    /// ### Params
+    ///
+    /// * `n_cells` - Number of cells in the count matrix
+    ///
+    /// ### Returns
+    ///
+    /// `None` for [`Reference::Profiles`], otherwise one ascending cell list
+    /// per profile. An error for no cells, a mismatched or out-of-range label,
+    /// a cell out of range or in two groups, or a group without cells.
+    pub fn cell_groups(&self, n_cells: usize) -> Result<Option<Vec<Vec<u32>>>, CnvErrors> {
+        let (cells, group, n_ref) = match *self {
+            Reference::Profiles { .. } => return Ok(None),
+            Reference::Cells(cells) => (cells, None, 1),
+            Reference::Groups {
+                cells,
+                group,
+                n_ref,
+            } => (cells, Some(group), n_ref),
+        };
+        if cells.is_empty() {
+            return Err(CnvErrors::EmptyInput {
+                what: "reference cells",
+            });
+        }
+        if let Some(g) = group {
+            if g.len() != cells.len() {
+                return Err(CnvErrors::ShapeMismatch {
+                    what: "reference group labels",
+                    expected: cells.len(),
+                    got: g.len(),
+                });
+            }
+            if let Some(&r) = g.iter().find(|&&r| r as usize >= n_ref) {
+                return Err(CnvErrors::InvalidParameter {
+                    name: "group",
+                    value: r.to_string(),
+                    expected: "labels below n_ref",
+                });
+            }
+        }
+        if let Some(&c) = cells.iter().find(|&&c| c as usize >= n_cells) {
+            return Err(CnvErrors::InvalidParameter {
+                name: "cells",
+                value: c.to_string(),
+                expected: "cell indices below n_cells",
+            });
+        }
+        let mut pairs: Vec<(u32, u32)> = match group {
+            Some(g) => cells.iter().copied().zip(g.iter().copied()).collect(),
+            None => cells.iter().map(|&c| (c, 0)).collect(),
+        };
+        pairs.sort_unstable();
+        pairs.dedup();
+        if pairs.windows(2).any(|w| w[0].0 == w[1].0) {
+            return Err(CnvErrors::InvalidReference {
+                what: "a cell is in two reference groups",
+            });
+        }
+        let mut lists = vec![Vec::new(); n_ref];
+        for (c, r) in pairs {
+            lists[r as usize].push(c);
+        }
+        if lists.iter().any(|l| l.is_empty()) {
+            return Err(CnvErrors::EmptyInput {
+                what: "a reference group",
+            });
+        }
+        Ok(Some(lists))
     }
 }
 
@@ -962,5 +1055,53 @@ pub(crate) mod tests {
             assert!(mse <= r_mse * (1.0 + 1e-6), "{}: {mse} > {r_mse}", row[0]);
             assert!((fit.w.iter().sum::<f64>() - 1.0).abs() < 1e-12);
         }
+    }
+
+    #[test]
+    fn test_groups_resolve_per_label() {
+        let sim = load_sim();
+        let counts = sim.counts();
+        let o = &sim.order;
+        let cells: Vec<u32> = (0..100).rev().collect();
+        let group: Vec<u32> = cells.iter().map(|&c| c % 3).collect();
+        let p = Reference::<f64>::Groups {
+            cells: &cells,
+            group: &group,
+            n_ref: 3,
+        }
+        .resolve(&counts, o)
+        .unwrap();
+        assert_eq!(p.n_ref, 3);
+        for r in 0..3u32 {
+            let list: Vec<u32> = (0..100).filter(|&c| c % 3 == r).collect();
+            let want = Reference::<f64>::Cells(&list).resolve(&counts, o).unwrap();
+            assert_eq!(p.profile(r as usize), &want.lambda[..]);
+        }
+    }
+
+    #[test]
+    fn test_cell_groups_rejects_bad_labels() {
+        let groups = |cells: &[u32], group: &[u32], n_ref| {
+            Reference::<f64>::Groups {
+                cells,
+                group,
+                n_ref,
+            }
+            .cell_groups(5)
+        };
+        assert_eq!(
+            groups(&[3, 1, 3], &[1, 0, 1], 2).unwrap(),
+            Some(vec![vec![1], vec![3]])
+        );
+        assert!(groups(&[], &[], 1).is_err());
+        assert!(groups(&[0, 1], &[0], 1).is_err());
+        assert!(groups(&[0, 1], &[0, 2], 2).is_err());
+        assert!(groups(&[0, 5], &[0, 1], 2).is_err());
+        assert!(groups(&[0, 0], &[0, 1], 2).is_err());
+        assert!(groups(&[0, 1], &[0, 0], 2).is_err());
+        assert_eq!(
+            Reference::<f64>::Cells(&[2, 0, 2]).cell_groups(5).unwrap(),
+            Some(vec![vec![0, 2]])
+        );
     }
 }

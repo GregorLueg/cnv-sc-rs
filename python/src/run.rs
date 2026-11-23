@@ -11,7 +11,9 @@ use cnv_sc_rs::genome::CsrCounts;
 use cnv_sc_rs::posterior::{N_LOG_ODDS, effective_state};
 use cnv_sc_rs::prelude::Verbosity;
 use cnv_sc_rs::reference::Reference;
-use numpy::{IntoPyArray, PyArrayMethods, PyReadonlyArray1};
+use numpy::{
+    IntoPyArray, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -64,6 +66,14 @@ fn state_name(s: impl std::fmt::Debug) -> String {
 fn pack<'py>(py: Python<'py>, r: CnvResult<f32>) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
     let n_cells = r.bins.n_cells;
+    d.set_item(
+        "refs",
+        r.refs
+            .iter()
+            .map(|x| x.map_or(-1, |r| r as i32))
+            .collect::<Vec<_>>()
+            .into_pyarray(py),
+    )?;
 
     // bins
     let n_bins = r.bins.bins.len();
@@ -236,8 +246,12 @@ fn pack<'py>(py: Python<'py>, r: CnvResult<f32>) -> PyResult<Bound<'py, PyDict>>
 /// * `chrom` - Chromosome id per gene, `u32`
 /// * `start` - Gene start per gene, `u64`
 /// * `end` - Gene end per gene, `u64`
-/// * `ref_cells` - Row indices of the normal reference cells, `u32`
 /// * `params` - Parameters, see [`cnv_params`]
+/// * `ref_cells` - Row indices of the normal reference cells, `u32`
+/// * `ref_group` - Profile per entry of `ref_cells`, `u32`, labels
+///   `0..n_ref`; `None` pools all reference cells into one profile
+/// * `ref_profiles` - Precomputed profiles, `f32`, `n_ref x n_genes`
+///   C-contiguous; exclusive with `ref_cells`
 /// * `n_threads` - Thread count, `None` for rayon's global pool
 /// * `verbose` - Print stage timings to stdout
 ///
@@ -245,7 +259,7 @@ fn pack<'py>(py: Python<'py>, r: CnvResult<f32>) -> PyResult<Bound<'py, PyDict>>
 ///
 /// The flattened result, or `CnvError` / `ValueError`.
 #[pyfunction]
-#[pyo3(signature = (indptr, indices, data, n_genes, chrom, start, end, ref_cells, params, *, n_threads = None, verbose = false))]
+#[pyo3(signature = (indptr, indices, data, n_genes, chrom, start, end, params, *, ref_cells = None, ref_group = None, ref_profiles = None, n_threads = None, verbose = false))]
 #[allow(clippy::too_many_arguments)]
 pub fn run_cnv<'py>(
     py: Python<'py>,
@@ -256,8 +270,10 @@ pub fn run_cnv<'py>(
     chrom: PyReadonlyArray1<'py, u32>,
     start: PyReadonlyArray1<'py, u64>,
     end: PyReadonlyArray1<'py, u64>,
-    ref_cells: PyReadonlyArray1<'py, u32>,
     params: &Bound<'py, PyDict>,
+    ref_cells: Option<PyReadonlyArray1<'py, u32>>,
+    ref_group: Option<PyReadonlyArray1<'py, u32>>,
+    ref_profiles: Option<PyReadonlyArray2<'py, f32>>,
     n_threads: Option<usize>,
     verbose: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
@@ -272,7 +288,31 @@ pub fn run_cnv<'py>(
         slice(&start, "start")?,
         slice(&end, "end")?,
     );
-    let ref_cells = slice(&ref_cells, "ref_cells")?;
+    let reference = match (&ref_cells, &ref_group, &ref_profiles) {
+        (Some(c), None, None) => Reference::Cells(slice(c, "ref_cells")?),
+        (Some(c), Some(g), None) => {
+            let group = slice(g, "ref_group")?;
+            Reference::Groups {
+                cells: slice(c, "ref_cells")?,
+                group,
+                n_ref: group.iter().max().map_or(0, |&m| m as usize + 1),
+            }
+        }
+        (None, None, Some(p)) => {
+            if !p.is_c_contiguous() {
+                return Err(PyValueError::new_err("ref_profiles must be C-contiguous"));
+            }
+            Reference::Profiles {
+                lambda: p.as_slice()?,
+                n_ref: p.shape()[0],
+            }
+        }
+        _ => {
+            return Err(PyValueError::new_err(
+                "pass ref_cells (optionally with ref_group) or ref_profiles",
+            ));
+        }
+    };
     let verbosity = if verbose {
         Verbosity::Normal
     } else {
@@ -297,7 +337,7 @@ pub fn run_cnv<'py>(
                     chrom,
                     start,
                     end,
-                    &Reference::Cells(ref_cells),
+                    &reference,
                     Some(params),
                     verbosity,
                 )
