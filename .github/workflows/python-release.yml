@@ -49,9 +49,9 @@ jobs:
       # builds. Whether an upload happens is the `publish` job's `if:` below.
       publish: true
 
-      # DISARMED until the PyPI trusted publisher exists: only a dispatch with
-      # the box ticked tags. To arm, replace `false` with `true`, as evoc-rs.
-      tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || false }}
+      # ARMED. A dispatch takes the form's value, so a rehearsal can opt out;
+      # anything else tags. Not `a && b || true`: that is true when b is false.
+      tag: ${{ github.event_name != 'workflow_dispatch' || inputs.tag }}
       # A choice rather than a free-text URL: there are only ever two answers
       # here, and a typo costs the whole wheel matrix before it is noticed.
       repository-url: ${{ (github.event_name == 'workflow_dispatch' && inputs.index == 'testpypi') && 'https://test.pypi.org/legacy/' || '' }}
@@ -73,13 +73,13 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: build
-    # DISARMED: only a dispatch with `publish` ticked uploads. To arm, append
-    # `|| github.event_name != 'workflow_dispatch'` inside the brackets, as
-    # evoc-rs; then a version bump on main publishes, held by the `pypi`
-    # environment review.
+    # ARMED. `should-build` is false when the version is already on PyPI, so an
+    # ordinary push to main stops here. A version bump makes this fire, held by
+    # the `pypi` environment review before the upload.
     if: >-
       needs.build.outputs.should-build == 'true' &&
-      (github.event_name == 'workflow_dispatch' && inputs.publish)
+      (github.event_name == 'workflow_dispatch' && inputs.publish
+       || github.event_name != 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: pypi
