@@ -35,7 +35,8 @@ Wheels are abi3, so one wheel covers Python 3.10 onwards.
   your annotation uses. Genes off chromosomes 1 to 22 are dropped, as in
   numbat.
 - **Normal reference cells**: cells you are confident carry no CNV, for
-  instance immune or stromal cells from the same sample.
+  instance immune or stromal cells from the same sample. Several cell types?
+  Label them and each gets its own profile.
 
 Start with the [quickstart](quickstart.md), or go to the
 [scanpy guide](scanpy.md) if your data lives in an `AnnData`.

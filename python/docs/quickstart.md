@@ -16,6 +16,29 @@ res = cnv.infer_cnv(X, chrom, start, end, reference=normal, genome="hg38")
 `genome` picks the exclusion intervals: MHC and the IG/TR loci on `"hg38"`
 or `"hg19"`, or `"none"`. Match it to the build of your gene coordinates.
 
+## Mixed references
+
+Pooling T cells, myeloid cells and oligodendrocytes into one profile is a
+bad idea: the cell-type differences between a query cell and the pool can
+read as copy number change. Label the reference cells instead, and each
+label gets its own profile. Every cell is then compared against the profile
+it correlates best with, as numbat does.
+
+```python
+# cell_type: label per cell; only the reference cells' labels are read
+res = cnv.infer_cnv(X, chrom, start, end, normal, reference_labels=cell_type)
+```
+
+Got profiles from elsewhere, say a reference atlas? Pass them as a float
+`(n_genes, R)` array of proportions in the gene order of `X`, in place of
+the cells:
+
+```python
+res = cnv.infer_cnv(X, chrom, start, end, profiles)
+```
+
+They are subset to the kept genes, not renormalised.
+
 ## Reading the result
 
 `res` is a `CnvResult`. Per-cell arrays have one row per input cell; cells
@@ -33,6 +56,7 @@ res.genotypes  # per genotype: [(segment row, state), ...]
 res.p_cnv  # cells x non-neutral segments, posterior of each CNV
 res.bins  # cells x bins, smoothed log-ratio signal
 res.bin_table  # chrom, start, end, n_genes per bin
+res.reference  # reference profile per cell, index into res.reference_names
 ```
 
 `segments["post_col"]` maps a segment row to its column in `p_cnv` and

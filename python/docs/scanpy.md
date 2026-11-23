@@ -104,6 +104,21 @@ res = cnv.infer_cnv_adata(
 )
 ```
 
+That pools all of them into one profile. With several cell types in the
+reference, give each its own with `reference_group_key`; every cell is then
+compared against the profile it correlates best with:
+
+```python
+res = cnv.infer_cnv_adata(
+    adata,
+    reference_key="cell_type",
+    reference_cat=["T cell", "B cell", "Macrophage"],
+    reference_group_key="cell_type",  # or any other obs column
+    layer="counts",
+    genome="hg38",
+)
+```
+
 This writes:
 
 | Slot                     | Content                                             |
@@ -113,7 +128,8 @@ This writes:
 | `obs["cnv_p_tumour"]`    | `1 - p(normal)` per cell                            |
 | `obs["cnv_clone"]`       | Most probable genotype, `0` normal, `-1` not used   |
 | `obs["cnv_leaf"]`        | Leaf cluster of the CNV hierarchy                   |
-| `uns["cnv"]`             | `chr_pos`, `bins`, `segments`, `params`, `genome`   |
+| `obs["cnv_reference"]`   | Reference profile per cell, `-1` not used           |
+| `uns["cnv"]`             | `chr_pos`, `bins`, `segments`, `reference_names`, `params`, `genome` |
 
 The returned `CnvResult` holds the same plus `log_odds`, `clone_prob`,
 `genotypes` and the segment table as a polars DataFrame.

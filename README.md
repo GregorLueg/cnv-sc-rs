@@ -58,8 +58,11 @@ the clone posterior.
 
 - CSR counts, `u32` indices and counts, caller gene order.
 - Per gene: chromosome id (`u32`), start and end (`u64`).
-- A reference: `Reference::Cells` (indices of normal cells, pooled) or
-  `Reference::Profiles` (genes x `n_ref` proportions, column-major).
+- A reference: `Reference::Cells` (indices of normal cells, pooled),
+  `Reference::Groups` (normal cells with a label each, one profile per label)
+  or `Reference::Profiles` (genes x `n_ref` proportions, column-major). With
+  more than one profile, each cell is compared against the one it correlates
+  best with.
 - Optional exclusion regions in `CnvParams::exclude`, e.g. the MHC.
 
 Storage is generic over `CnvFloat`, default `f32`. Every reduction and
